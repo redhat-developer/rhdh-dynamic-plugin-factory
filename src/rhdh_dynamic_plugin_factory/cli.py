@@ -126,8 +126,9 @@ def setup_config_directory(config: PluginFactoryConfig, args: argparse.Namespace
         config_dir = getattr(config, 'config_dir', Path('/config'))
         if config_dir.exists():
             config.logger.info(f"Attempting to auto-generate plugins-list.yaml: {plugins_list_file}")
-            plugin_cfg = PluginListConfig.create_default(config_dir)
-            plugin_cfg.to_file(plugins_list_file)
+            if not auto_generate_plugins_list(config_dir, args.repo_path):
+                config.logger.error(f"[red]Failed to auto-generate plugins-list.yaml[/red]")
+                exit(1)
         else:
             config.logger.error(f"[red]{config_dir} does not exist, please create it first[/red]")
             exit(1)

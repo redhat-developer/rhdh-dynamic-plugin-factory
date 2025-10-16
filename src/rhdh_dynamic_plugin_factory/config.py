@@ -250,25 +250,8 @@ class PluginListConfig:
     
     def to_file(self, plugin_list_file: Path) -> None:
         """Save plugin list to YAML file."""
-        
-        plugin_list_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(plugin_list_file, 'w') as f:
-            # Write header comment
-            f.write("# Plugin list for RHDH Dynamic Plugin Factory\n")
-            f.write("# Format: plugin_path: [additional_args]\n")
-            f.write("# Example:\n")
-            f.write("# plugins/my-plugin:\n")
-            f.write("# plugins/my-backend: --embed-package @some/package\n\n")
-            
-            # Convert to YAML format
-            yaml_data = {}
-            for plugin_path, args in self.plugins.items():
-                if args.strip():
-                    yaml_data[plugin_path] = args
-                else:
-                    yaml_data[plugin_path] = None
-            
-            yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=True)
+        # TODO: Implement this function
+        raise NotImplementedError("TODO: This function is not implemented")
     
     def get_plugins(self) -> Dict[str, str]:
         return self.plugins.copy()
@@ -283,42 +266,4 @@ class PluginListConfig:
     def create_default(cls, workspace_dir: Path) -> "PluginListConfig":
         """Create a default plugin list by scanning workspace."""
         raise NotImplementedError("TODO: This function is not implemented")
-
-        plugins = {}
-        
-        # Look for common plugin patterns
-        if workspace_dir.exists():
-            # Look for plugins/ directory
-            plugins_dir = workspace_dir / "plugins"
-            if plugins_dir.exists():
-                for plugin_dir in plugins_dir.iterdir():
-                    if plugin_dir.is_dir() and (plugin_dir / "package.json").exists():
-                        plugins[f"plugins/{plugin_dir.name}"] = ""
-            
-            # Look for workspaces in package.json
-            package_json = workspace_dir / "package.json"
-            if package_json.exists():
-                try:
-                    with open(package_json, 'r') as f:
-                        package_data = json.load(f)
-                    
-                    workspaces = package_data.get("workspaces", [])
-                    for workspace in workspaces:
-                        # Handle glob patterns (simplified)
-                        if "*" in workspace:
-                            workspace_base = workspace.replace("/*", "")
-                            workspace_path = workspace_dir / workspace_base
-                            if workspace_path.exists():
-                                for plugin_dir in workspace_path.iterdir():
-                                    if plugin_dir.is_dir() and (plugin_dir / "package.json").exists():
-                                        plugins[f"{workspace_base}/{plugin_dir.name}"] = ""
-                        else:
-                            workspace_path = workspace_dir / workspace
-                            if workspace_path.exists() and (workspace_path / "package.json").exists():
-                                plugins[workspace] = ""
-                                
-                except Exception:
-                    pass  # Ignore errors in package.json parsing
-        
-        return cls(plugins)
 
