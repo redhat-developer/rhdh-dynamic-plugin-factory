@@ -1,0 +1,10 @@
+# Python Caches
+**/__pycache__
+
+# Local Configuration Folders
+config/
+workspace/
+outputs/
+
+# VSCode
+.vscode/

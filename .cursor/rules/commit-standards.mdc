@@ -1,0 +1,99 @@
+---
+description: Conventional commit format with emojis and commit guidelines
+globs:
+alwaysApply: false
+---
+
+# Commit Standards
+
+## Conventional Commit Format
+Use format `<type>: <description>` with emoji:
+
+### Feature Commits
+- ✨ `feat`: New feature
+- 🧵 `feat`: Add or update code related to multithreading or concurrency
+- 🔍️ `feat`: Improve SEO
+- 🏷️ `feat`: Add or update types
+- 💬 `feat`: Add or update text and literals
+- 🌐 `feat`: Internationalization and localization
+- 👔 `feat`: Add or update business logic
+- 📱 `feat`: Work on responsive design
+- 🚸 `feat`: Improve user experience / usability
+- 🍱 `assets`: Add or update assets
+- ♿️ `feat`: Improve accessibility
+- 🗃️ `db`: Perform database related changes
+- 🔊 `feat`: Add or update logs
+- 🤡 `test`: Mock things
+- 🥚 `feat`: Add or update an easter egg
+- 📸 `test`: Add or update snapshots
+- ⚗️ `experiment`: Perform experiments
+- 🚩 `feat`: Add, update, or remove feature flags
+- 💫 `ui`: Add or update animations and transitions
+- 🦺 `feat`: Add or update code related to validation
+- ✈️ `feat`: Improve offline support
+- 📈 `feat`: Add or update analytics or tracking code
+- 💥 `feat`: Introduce breaking changes
+
+### Fix Commits
+- 🐛 `fix`: Bug fix
+- 🚨 `fix`: Fix compiler/linter warnings
+- 🔒️ `fix`: Fix security issues
+- 🩹 `fix`: Simple fix for a non-critical issue
+- 🥅 `fix`: Catch errors
+- 👽️ `fix`: Update code due to external API changes
+- 🔥 `fix`: Remove code or files
+- 🚑️ `fix`: Critical hotfix
+- 💚 `fix`: Fix CI build
+- ✏️ `fix`: Fix typos
+- 🔇 `fix`: Remove logs
+
+### Documentation Commits
+- 📝 `docs`: Documentation changes
+- 💡 `docs`: Add or update comments in source code
+
+### Style Commits
+- 💄 `style`: Code style changes
+- 🎨 `style`: Improve structure/format of the code
+
+### Refactoring Commits
+- ♻️ `refactor`: Code refactoring
+- 🚚 `refactor`: Move or rename resources
+- 🏗️ `refactor`: Make architectural changes
+- ⚰️ `refactor`: Remove dead code
+
+### Performance Commits
+- ⚡️ `perf`: Performance improvements
+
+### Test Commits
+- ✅ `test`: Tests
+
+### Chore Commits
+- 🔧 `chore`: Tooling, configuration
+- 🚀 `ci`: CI/CD improvements
+- 🗑️ `revert`: Reverting changes
+- 👥 `chore`: Add or update contributors
+- 🔀 `chore`: Merge branches
+- 📦️ `chore`: Add or update compiled files or packages
+- ➕ `chore`: Add a dependency
+- ➖ `chore`: Remove a dependency
+- 🌱 `chore`: Add or update seed files
+- 🧑‍💻 `chore`: Improve developer experience
+- 🎉 `chore`: Begin a project
+- 🔖 `chore`: Release/Version tags
+- 🚧 `wip`: Work in progress
+- 📌 `chore`: Pin dependencies to specific versions
+- 👷 `ci`: Add or update CI build system
+- ⏪️ `revert`: Revert changes
+- 📄 `chore`: Add or update license
+- 🙈 `chore`: Add or update .gitignore file
+
+## Commit Guidelines
+- Use present tense, imperative mood (e.g., "add feature" not "added feature")
+- Keep first line under 72 characters
+- Write atomic commits with related changes serving single purpose
+- Split large changes into separate commits based on:
+  - Different concerns (unrelated parts of codebase)
+  - Different types of changes (features, fixes, refactoring)
+  - File patterns (source code vs documentation)
+  - Logical grouping
+  - Size considerations
