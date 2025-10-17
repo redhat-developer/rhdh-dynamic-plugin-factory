@@ -5,6 +5,7 @@ Configuration management for RHDH Plugin Factory.
 import argparse
 import os
 from pathlib import Path
+import sys
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
@@ -23,8 +24,7 @@ class PluginFactoryConfig:
     
     # Directories
     repo_path: str = field(default="/workspace")  # Local path where plugin source code will be stored
-    config_dir: Path = field(default_factory=lambda: Path("config"))
-    workspace_path: Path = field(default_factory=lambda: Path("workspace"))
+    config_dir: str = field(default="/config")
     
     # Registry configuration (loaded from environment variables, only required for push operations)
     registry_url: Optional[str] = field(default=None)
@@ -62,10 +62,14 @@ class PluginFactoryConfig:
         # Create config with environment overrides
         config = cls()
         
-
-        config.workspace_path = Path(os.getenv("WORKSPACE_PATH", args.workspace_path or config.workspace_path))
-        config.config_dir = Path(os.getenv("CONFIG_DIR", args.config_dir))
-        config.repo_path = Path(os.getenv("REPO_PATH", args.repo_path))
+        
+        try:
+            config.workspace_path = Path(os.getenv("WORKSPACE_PATH", args.workspace_path))
+        except Exception as e:
+            config.logger.error(f"[red]Failed to set workspace path, please set WORKSPACE_PATH environment variable or use the --workspace-path argument: {e}[/red]")
+            sys.exit(1)
+        config.config_dir = Path(args.config_dir or config.config_dir)
+        config.repo_path = Path(args.repo_path or config.repo_path)
         
         # Load version defaults from environment (set by default.env)
         config.node_version = os.getenv("NODE_VERSION")

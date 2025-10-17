@@ -1,0 +1,8 @@
+config/
+outputs/
+workspace/
+.vscode/
+.git/
+.gitignore
+.venv/
+.cursor/

@@ -19,10 +19,12 @@ The RHDH Plugin Factory automates the process of converting Backstage plugins in
 - **Python**: 3.8 or higher
 - **Node.js**: 22 or higher (specified in `default.env`)
 - **Yarn**: Latest version via Corepack
-- **Git**
+- **Git**: For cloning and checking out remote git repositories
 - **Buildah**: For building and pushing container images (if using `--push-images`)
 
 ## Installation
+
+You can use the RHDH Plugin Factory either locally or via a container image.
 
 ### Local Setup
 
@@ -46,6 +48,48 @@ The RHDH Plugin Factory automates the process of converting Backstage plugins in
    # Copy and customize if needed
    cp default.env .env
    ```
+
+### Container Image Setup
+
+#### Building the Image
+
+Build the container image using Podman or Docker. Change `rhdh-dynamic-plugin-factory:latest` to your own image:
+
+```bash
+podman build -t rhdh-dynamic-plugin-factory:latest .
+```
+
+Or with Docker:
+
+```bash
+docker build -t rhdh-dynamic-plugin-factory:latest .
+```
+
+#### Container Requirements
+
+The container requires specific capabilities and device access for building dynamic plugins:
+
+- **Volume Mounts**: Mount your configuration, workspace, and output directories to the `/config`, `/workspace` and `/outputs` directories respectively
+- **Device Access**: Mount `/dev/fuse` for filesystem operations
+- **SELinux Context**: Use `:z` flag for volume mounts on SELinux-enabled systems when using `podman`
+
+#### Basic Container Usage
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  -v ./workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  rhdh-dynamic-plugin-factory:latest \
+```
+
+**Key Differences from Local Usage:**
+
+- Paths for `--config-dir`, `--repo-path`, and `--output-dir` don't need to be defined since they use the default values of `/config`, `/workspace` and `/outputs` respectively.
+- Usage of volume mounts to map your local directories to these container paths
+- The `--device /dev/fuse` flag is required for buildah operations inside the container
+- Use `:z` or `:Z` SELinux labels when running on RHEL/Fedora/CentOS systems
 
 ## Configuration
 
@@ -134,9 +178,12 @@ REGISTRY_INSECURE=false
 
 # Logging
 LOG_LEVEL=DEBUG
+WORKSPACE_PATH=<path_to_workspace_with_respect_to_plugin_repo_root>
 ```
 
 `LOG_LEVEL` can be set to one of `DEBUG`, `INFO` (default), `WARN`, `ERROR`, or `CRITICAL`
+
+`WORKSPACE_PATH` can be set in lieu of the `--workspace-path` argument
 
 ### Patches and Overlays
 
@@ -184,11 +231,11 @@ python -m rhdh_dynamic_plugin_factory.cli [OPTIONS]
 | `--log-level` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `--verbose` | `false` | Show verbose output with file and line numbers |
 
-### Example Usage (Local)
+### Example Usage
 
-#### Locally build plugins from backstage/community-plugins (todo workspace)
+#### Build plugins from backstage/community-plugins (todo workspace)
 
-Assumes our cwd is the root of this repository
+**Local Execution:**
 
 ```bash
 python -m rhdh_dynamic_plugin_factory.cli \
@@ -200,19 +247,33 @@ python -m rhdh_dynamic_plugin_factory.cli \
   --log-level DEBUG
 ```
 
-This command will:
+**Container Execution:**
 
-1. Load configurations from `./config/`
-2. Clone the repository specified in `config/source.json` to `./workspace`
-3. Apply patches and overlays from `./config/patches/` and `./config/<plugin-path>/overlay/`
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  -v ./workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  -e LOG_LEVEL=DEBUG \
+  rhdh-dynamic-plugin-factory:latest \
+  --workspace-path workspaces/todo \
+  --no-push-images
+```
+
+Both methods will:
+
+1. Load configurations from the local `./config` directory
+2. Clone the repository specified in `./config/source.json` to `./workspace`
+3. Apply patches and overlays from `./config/patches/` and `./config/<plugin-path>/overlay/` to `./workspace`
 4. Install dependencies in `./workspace/workspaces/todo`
-5. Build plugins listed in `config/plugins-list.yaml`
-6. Export artifacts to `./outputs/`
+5. Export and package plugins listed in `./config/plugins-list.yaml`
+6. Output artifacts to the local `./outputs/` directory
 7. Skip pushing to registry (`--no-push-images`)
 
 #### Build and push to registry
 
-Currently only supports quay.io
+**Local Execution:**
 
 ```bash
 # Set registry credentials in config/.env or environment
@@ -229,11 +290,52 @@ python -m rhdh_dynamic_plugin_factory.cli \
   --push-images
 ```
 
+**Container Execution:**
+
+```bash
+# Pass registry credentials as environment variables
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  -v ./workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  -e REGISTRY_URL=quay.io \
+  -e REGISTRY_USERNAME=myuser \
+  -e REGISTRY_PASSWORD=mytoken \
+  -e REGISTRY_NAMESPACE=mynamespace \
+  rhdh-dynamic-plugin-factory:latest \
+  --config-dir /config \
+  --repo-path /workspace \
+  --workspace-path workspaces/announcements \
+  --output-dir /outputs \
+  --push-images
+```
+
+**Note:** For security, consider providing registry configurations through the `config/.env` file
+
+```bash
+# Using environment file
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  -v ./workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  --env-file ./config/.env \
+  rhdh-dynamic-plugin-factory:latest \
+  --config-dir /config \
+  --repo-path /workspace \
+  --workspace-path workspaces/announcements \
+  --output-dir /outputs \
+  --push-images
+```
+
 #### Using a local repository (skip cloning)
 
 TODO: Add CLI option to set priority for this option when `source.json` exists
 
 If you already have the source code locally:
+
+**Local Execution:**
 
 ```bash
 # Remove or don't create source.json in config/
@@ -244,6 +346,22 @@ python -m rhdh_dynamic_plugin_factory.cli \
   --repo-path ./existing-workspace \
   --workspace-path . \
   --output-dir ./outputs \
+  --no-push-images
+```
+
+**Container Execution:**
+
+```bash
+# Mount your existing workspace directory
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  -v /path/to/existing-workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  rhdh-dynamic-plugin-factory:latest \
+  --config-dir /config \
+  --workspace-path . \
+  --output-dir /outputs \
   --no-push-images
 ```
 
@@ -272,29 +390,96 @@ ${REGISTRY_URL}/${REGISTRY_NAMESPACE}/plugin-name-dynamic:1.0.0
 
 See the `examples` directory for complete configuration examples:
 
-- **TODO Workspace**: Located at [`examples/example-config-todo`](./examples/example-config-todo/)
-  - This example contains a custom `scalprum-config.json` file and uses the standard backstage community plugins (BCP) workspace format
-  - Example Command to locally export:
+### TODO Workspace Example
 
-    ```bash
-    python src/rhdh_dynamic_plugin_factory --config-dir ./examples/example-config-todo --repo-path ./workspace --no-push-images --workspace-path workspaces/todo --output-dir ./outputs
-    ```
+Located at [`examples/example-config-todo`](./examples/example-config-todo/)
 
-- **Gitlab Workspace**: Located at [`examples/example-config-gitlab`](./examples/example-config-gitlab/)
-  - This example contains a overlays used to override entire files contained in the gitlab workspace in <https://github.com/immobiliare/backstage-plugin-gitlab> which does not use the standard BCP workspace format.
-  - In the example command, we will need to modify `--workspace-path` to point to the root of the workspace which in this case is `.`:
-  
-    ```bash
-    python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./workspace --no-push-images --workspace-path . --output-dir ./outputs
-    ```
+This example contains a custom `scalprum-config.json` file and uses the standard backstage community plugins (BCP) workspace format.
+The process is very similar if you also want to include a custom `backstage.json` or `app-config.dynamic.yaml` file.
 
-- **AWS ECS Workspace**: Located at [`examples/example-config-aws-ecs`](./examples/example-config-aws-ecs/)
-  - This example contains a `patches` folder used for small patches as well as custom export arguments for the `ecs` backend plugin in the [`plugins-list.yaml`](./examples/example-config-aws-ecs/plugins-list.yaml) to embed additional packages during the dynamic plugin export
-  - This workspace also does not use the standard BCP workspace format so we will have a similar command as above:
+**Local Execution:**
 
-    ```bash
-    python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./workspace --no-push-images --workspace-path . --output-dir ./outputs
-    ```
+```bash
+python -m rhdh_dynamic_plugin_factory.cli \
+  --config-dir ./examples/example-config-todo \
+  --repo-path ./workspace \
+  --workspace-path workspaces/todo \
+  --output-dir ./outputs \
+  --no-push-images
+```
+
+**Container Execution:**
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./examples/example-config-todo:/config:z \
+  -v ./workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  rhdh-dynamic-plugin-factory:latest \
+  --workspace-path workspaces/todo \
+  --no-push-images
+```
+
+### Gitlab Workspace Example
+
+Located at [`examples/example-config-gitlab`](./examples/example-config-gitlab/)
+
+This example contains overlays used to override entire files contained in the gitlab workspace at <https://github.com/immobiliare/backstage-plugin-gitlab> which does not use the standard BCP workspace format. The `--workspace-path` is set to `.` (root of repository).
+
+**Local Execution:**
+
+```bash
+python -m rhdh_dynamic_plugin_factory.cli \
+  --config-dir ./examples/example-config-gitlab \
+  --repo-path ./workspace \
+  --workspace-path . \
+  --output-dir ./outputs \
+  --no-push-images
+```
+
+**Container Execution:**
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./examples/example-config-gitlab:/config:z \
+  -v ./workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  rhdh-dynamic-plugin-factory:latest \
+  --workspace-path . \
+  --no-push-images
+```
+
+### AWS ECS Workspace Example
+
+Located at [`examples/example-config-aws-ecs`](./examples/example-config-aws-ecs/)
+
+This example contains a `patches` folder used for small patches as well as custom export arguments for the `ecs` backend plugin in the [`plugins-list.yaml`](./examples/example-config-aws-ecs/plugins-list.yaml) to embed additional packages during the dynamic plugin export. This workspace also does not use the standard BCP workspace format.
+
+**Local Execution:**
+
+```bash
+python -m rhdh_dynamic_plugin_factory.cli \
+  --config-dir ./examples/example-config-aws-ecs \
+  --repo-path ./workspace \
+  --workspace-path . \
+  --output-dir ./outputs \
+  --no-push-images
+```
+
+**Container Execution:**
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./examples/example-config-aws-ecs:/config:z \
+  -v ./workspace:/workspace:z \
+  -v ./outputs:/outputs:z \
+  rhdh-dynamic-plugin-factory:latest \
+  --repo-path /workspace \
+  --no-push-images
+```
 
 ## Development
 

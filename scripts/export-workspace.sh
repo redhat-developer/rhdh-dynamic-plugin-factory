@@ -10,8 +10,9 @@ skipWorkspace=false
 INPUTS_CLI_PACKAGE=${INPUTS_CLI_PACKAGE:="@red-hat-developer-hub/cli"} 
 # set command names based on CLI package
 EXPORT_COMMAND=("plugin" "export")
-PACKAGE_COMMAND=("plugin" "package")
-CONTAINER_BUILD_TOOL=${CONTAINER_BUILD_TOOL:="podman"}
+INPUTS_CONTAINER_BUILD_TOOL=${INPUTS_CONTAINER_BUILD_TOOL:="podman"}
+PACKAGE_COMMAND=("plugin" "package" "--container-tool" "${INPUTS_CONTAINER_BUILD_TOOL}")
+
 ##########################################################
 # start TODO remove this once fully migrated to rhdh-cli
 # fall back to old Janus defaults
@@ -116,7 +117,7 @@ else
                 if [[ "${INPUTS_PUSH_CONTAINER_IMAGE}" == "true" ]]
                 then
                     echo "========== Publishing Container ${PLUGIN_CONTAINER_TAG} =========="
-                    ${CONTAINER_BUILD_TOOL} push $PLUGIN_CONTAINER_TAG
+                    ${INPUTS_CONTAINER_BUILD_TOOL} push $PLUGIN_CONTAINER_TAG
                     if [ $? -eq 0 ] 
                     then
                         images+=("${PLUGIN_CONTAINER_TAG}")
@@ -200,7 +201,8 @@ then
 else # if not running in GitHub Actions
     echo "FAILED_EXPORTS:"
     cat $FAILED_EXPORTS_OUTPUT
-    echo "\n"
+    echo "--------------------------------"
     echo "PUBLISHED_EXPORTS:"
     cat $PUBLISHED_EXPORTS_OUTPUT
+    echo "--------------------------------"
 fi

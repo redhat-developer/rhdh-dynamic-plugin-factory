@@ -6,8 +6,9 @@ import sys
 import os
 import subprocess
 import argparse
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 from dotenv import load_dotenv
 # Handle both direct script execution and module execution
 try:
@@ -22,6 +23,83 @@ except ImportError:
 from dotenv import load_dotenv
 
 logger = get_logger("cli")
+
+
+def _stream_output(pipe, log_func: Callable[[str], None]) -> None:
+    """
+    Stream output from a pipe to a logging function.
+    
+    Args:
+        pipe: A file-like object to read from (e.g., process.stdout or process.stderr)
+        log_func: A callable that logs each line (e.g., logger.info or logger.error)
+    """
+    try:
+        for line in pipe:
+            log_func(line.rstrip())
+    finally:
+        pipe.close()
+
+
+def _run_command_with_streaming(
+    cmd: list[str],
+    logger_instance,
+    cwd: Optional[Path] = None,
+    env: Optional[dict] = None,
+    stderr_log_func: Optional[Callable[[str], None]] = None
+) -> int:
+    """
+    Run a command with real-time streaming of both stdout and stderr.
+    
+    Args:
+        cmd: Command and arguments to run
+        logger_instance: Logger instance to use for output
+        cwd: Working directory for the command
+        env: Environment variables for the command
+        stderr_log_func: Optional custom logging function for stderr. 
+                        Defaults to logger_instance.warning if not provided.
+                        Use logger_instance.info for commands that write 
+                        informational output to stderr (like git).
+    
+    Returns:
+        The return code of the process
+    """
+    # Default to warning logging for stderr if not specified
+    # (many tools write both warnings and errors to stderr)
+    if stderr_log_func is None:
+        stderr_log_func = logger_instance.warning
+    
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        cwd=cwd,
+        env=env
+    )
+    
+    # Create threads to read stdout and stderr concurrently
+    stdout_thread = threading.Thread(
+        target=_stream_output,
+        args=(process.stdout, logger_instance.info)
+    )
+    stderr_thread = threading.Thread(
+        target=_stream_output,
+        args=(process.stderr, stderr_log_func)
+    )
+    
+    # Start both threads
+    stdout_thread.start()
+    stderr_thread.start()
+    
+    # Wait for both threads to complete
+    stdout_thread.join()
+    stderr_thread.join()
+    
+    # Wait for process to complete and get return code
+    process.wait()
+    
+    return process.returncode
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -172,7 +250,7 @@ def validate_config_directory(config: PluginFactoryConfig, push_images: bool = F
         if config.registry_username and config.registry_password:
             config.logger.debug("Registry credentials provided")
         else:
-            config.logger.info("Registry credentials not provided - will skip podman login")
+            config.logger.info("Registry credentials not provided - will skip buildah login")
     else:
         config.logger.debug("Skipping registry validation (not pushing images)")
 
@@ -193,38 +271,33 @@ def clone_source_repository(source_config: SourceConfig, repo_path: Path) -> boo
         
     try:
         cmd = ["git", "clone", source_config.get_repo_url(), str(repo_path)]
-        with subprocess.Popen(
+        # Git writes progress to stderr, so log it as info instead of error
+        returncode = _run_command_with_streaming(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        ) as proc:
-            for line in proc.stdout:
-                logger.info(line.rstrip())
-            proc.wait()
-            if proc.returncode != 0:
-                logger.error(f"Failed to clone repository (exit code {proc.returncode})")
-                return False
+            logger,
+            stderr_log_func=logger.info
+        )
+        
+        if returncode != 0:
+            logger.error(f"Failed to clone repository (exit code {returncode})")
+            return False
         
         # Checkout specific ref if provided
         if source_config.repo_ref:
             cmd = ["git", "checkout", source_config.repo_ref]
             logger.info(f"[cyan]Checking out ref: {source_config.repo_ref}[/cyan]")
-            with subprocess.Popen(
+            # Git writes informational messages to stderr
+            returncode = _run_command_with_streaming(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                logger,
                 cwd=repo_path,
-                text=True,
-                bufsize=1,
-            ) as proc:
-                for line in proc.stdout:
-                    logger.info(line.rstrip())
-                proc.wait()
-                if proc.returncode != 0:
-                    logger.error(f"Failed to checkout ref {source_config.repo_ref} (exit code {proc.returncode})")
-                    return False
+                stderr_log_func=logger.info
+            )
+            
+            if returncode != 0:
+                logger.error(f"Failed to checkout ref {source_config.repo_ref} (exit code {returncode})")
+                return False
+        
         logger.info("[green]Repository cloned successfully[/green]")
         return True
         
@@ -286,25 +359,15 @@ def install_dependencies(yarn_version: str, workspace_path: Path) -> bool:
             logger.info(f"[cyan]{description}...[/cyan]")
             
             # Stream output in real-time
-            process = subprocess.Popen(
+            returncode = _run_command_with_streaming(
                 cmd,
+                logger,
                 cwd=workspace_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                env=env,  # Pass environment with corepack settings
+                env=env
             )
             
-            # Read output line by line
-            for line in process.stdout:
-                logger.info(line.rstrip())
-            
-            # Wait for completion
-            process.wait()
-            
-            if process.returncode != 0:
-                logger.error(f"{description} failed with exit code {process.returncode}")
+            if returncode != 0:
+                logger.error(f"{description} failed with exit code {returncode}")
                 return False
             
             logger.info(f"[green]✓ {description} completed[/green]")
@@ -316,9 +379,7 @@ def install_dependencies(yarn_version: str, workspace_path: Path) -> bool:
 
 
 def apply_patches_and_overlays(config: PluginFactoryConfig) -> bool:
-    """Apply patches and overlays using override-sources.sh script."""
-    config.logger.info("[bold blue]Applying patches and overlays[/bold blue]")
-    
+    """Apply patches and overlays using override-sources.sh script."""    
     script_dir = Path(__file__).parent.parent.parent / "scripts"
     script_path = script_dir / "override-sources.sh"
     
@@ -328,6 +389,7 @@ def apply_patches_and_overlays(config: PluginFactoryConfig) -> bool:
     
     repo_path = getattr(config, 'repo_path', Path('/workspace'))
     workspace_path = repo_path.joinpath(config.workspace_path).absolute()
+    logger.debug(f"Applying patches and overlays to workspace: {workspace_path}")
     # Run override-sources.sh script
     cmd = [
         str(script_path),
@@ -337,28 +399,19 @@ def apply_patches_and_overlays(config: PluginFactoryConfig) -> bool:
 
     try:
         # Stream output in real-time
-        process = subprocess.Popen(
+        # Use error logging for commands that patches and overlays
+        returncode = _run_command_with_streaming(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            cwd=workspace_path
+            config.logger,
+            cwd=workspace_path,
+            stderr_log_func=config.logger.error
         )
         
-        # Read stdout and stderr line by line in real-time
-        for line in process.stdout:
-            config.logger.info(line.rstrip())
-        
-        # Wait for process to complete and get return code
-        process.wait()
-        
-        # Capture any remaining stderr
-        if process.returncode == 0:
+        if returncode == 0:
             config.logger.info("[green]Patches and overlays applied successfully[/green]")
             return True
         else:
-            config.logger.error(f"[red]Patches/overlays failed with exit code {process.returncode}[/red]")
+            config.logger.error(f"[red]Patches/overlays failed with exit code {returncode}[/red]")
             return False
             
     except Exception as e:
@@ -421,34 +474,21 @@ def export_plugins(config: PluginFactoryConfig, args: argparse.Namespace) -> boo
     workspace_path = repo_path.joinpath(config.workspace_path).absolute()
     try:
         # Stream output in real-time
-        process = subprocess.Popen(
+        # Use error logging for export-workspace.sh script
+        returncode = _run_command_with_streaming(
             [str(script_path.absolute())],
+            config.logger,
+            cwd=workspace_path,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,  # Line buffered
-            cwd=workspace_path
+            stderr_log_func=config.logger.error
         )
         
-        # Read stdout and stderr line by line in real-time
-        for line in process.stdout:
-            config.logger.info(line.rstrip())
-        
-        # Wait for process to complete and get return code
-        process.wait()
-        
-        # Capture any remaining stderr
-        stderr_output = process.stderr.read()
-        if stderr_output:
-            config.logger.error(f"[red]{stderr_output.rstrip()}[/red]")
-        
-        if process.returncode != 0:
-            config.logger.error(f"[red]Plugin export script failed with exit code {process.returncode}[/red]")
+        if returncode != 0:
+            config.logger.error(f"[red]Plugin export script failed with exit code {returncode}[/red]")
             return False
         
         # Check if any plugins failed to export
-        has_failures = _display_export_results()
+        has_failures = _display_export_results(workspace_path)
         
         if has_failures:
             config.logger.error("[red]Plugin export completed with failures[/red]")
@@ -462,14 +502,17 @@ def export_plugins(config: PluginFactoryConfig, args: argparse.Namespace) -> boo
         return False
 
 
-def _display_export_results() -> bool:
+def _display_export_results(workspace_path: Path) -> bool:
     """Display results from export script output files.
+    
+    Args:
+        workspace_path: Path to the workspace where the output files are located.
     
     Returns:
         True if there were any failed exports, False otherwise.
     """
-    failed_file = Path("failed-exports-output")
-    published_file = Path("published-exports-output")
+    failed_file = workspace_path / "failed-exports-output"
+    published_file = workspace_path / "published-exports-output"
     has_failures = False
     
     if failed_file.exists():
@@ -493,7 +536,7 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     # Set up logging
-    setup_logging(level=args.log_level)
+    setup_logging(level=args.log_level, verbose=args.verbose)
 
     # Load configuration
     config = PluginFactoryConfig.load_from_env(args=args, env_file=args.config_dir / ".env")
