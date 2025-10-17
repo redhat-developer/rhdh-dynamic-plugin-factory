@@ -10,22 +10,26 @@ LABEL description="RHDH Dynamic Plugin Factory - Build and package Backstage plu
 USER 0
 
 WORKDIR /app
-
-COPY . .
 # Install corepack (not included in UBI images by default)
 RUN npm install -g corepack
 
 # Install necessary dependencies for building Node.js and other tools
 RUN microdnf update -y  
-RUN microdnf install -y python3 git patch python3-pip python3-devel \
-  make g++ zlib-devel brotli-devel openssl-devel buildah bash patch jq
+RUN microdnf install -y --nodocs \
+  --setopt=install_weak_deps=0 \
+  --setopt=tsflags=nodocs \
+  python3 git-core patch python3-pip make g++ zlib-devel \
+  brotli-devel openssl-devel buildah bash patch jq fuse-overlayfs \
+  && microdnf clean all
+
+COPY requirements.txt .
 
 # Install Python Dependencies
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN mkdir -p /workspace
-RUN mkdir -p /outputs
-RUN mkdir -p /config
+COPY . .
+
+RUN mkdir -p /workspace /outputs /config
 
 
 ENTRYPOINT ["python3", "-m", "src.rhdh_dynamic_plugin_factory.cli"]

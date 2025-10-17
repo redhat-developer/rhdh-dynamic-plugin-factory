@@ -6,3 +6,5 @@ workspace/
 .gitignore
 .venv/
 .cursor/
+**/__pycache__/
+requirements.dev.txt
