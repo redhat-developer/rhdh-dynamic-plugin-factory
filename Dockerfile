@@ -1,5 +1,5 @@
 # https://registry.access.redhat.com/ubi9/nodejs-22
-FROM registry.access.redhat.com/ubi9/nodejs-22:9.6-1760386551
+FROM registry.access.redhat.com/ubi9/nodejs-22-minimal:9.6-1760544659
 
 # Runtime requirements and usage documentation
 LABEL description="RHDH Dynamic Plugin Factory - Build and package Backstage plugins" \
@@ -16,8 +16,8 @@ COPY . .
 RUN npm install -g corepack
 
 # Install necessary dependencies for building Node.js and other tools
-RUN dnf update -y  
-RUN dnf install  -q -y --allowerasing --nobest python3 git patch python3-pip python3-devel \
+RUN microdnf update -y  
+RUN microdnf install -y python3 git patch python3-pip python3-devel \
   make g++ zlib-devel brotli-devel openssl-devel buildah bash patch jq
 
 # Install Python Dependencies
