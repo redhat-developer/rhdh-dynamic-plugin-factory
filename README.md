@@ -187,6 +187,13 @@ WORKSPACE_PATH=<path_to_workspace_with_respect_to_plugin_repo_root>
 
 ### Patches and Overlays
 
+> WARNING: This is a destructive operation
+>
+> Patches and overlays **modify files directly** in the `--repo-path` directory. These operations are **destructive** and will permanently change the repository contents.
+>
+> - When using `--use-local` with a local repository, patches and overlays WILL modify your local files
+> - Consider using version control OR cloning a fresh copy of your repository if you need to preserve the original state
+
 #### Patches Directory (`config/patches/`)
 
 Place `.patch` files to apply modifications to the source code:
@@ -223,11 +230,12 @@ python -m rhdh_dynamic_plugin_factory.cli [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--config-dir` | `./config` | Configuration directory containing `source.json`, `plugins-list.yaml`, patches, and overlays |
-| `--repo-path` | `./workspace` | Path where plugin source code will be cloned/stored |
+| `--config-dir` | `/config` | Configuration directory containing `source.json`, `plugins-list.yaml`, patches, and overlays |
+| `--repo-path` | `/workspace` | Path where plugin source code will be cloned/stored |
 | `--workspace-path` | (required) | Path to the workspace from repository root (e.g., `workspaces/todo`) |
-| `--output-dir` | `./outputs` | Directory for build artifacts (`.tgz` files and container images) |
-| `--push-images` / `--no-push-images` | `true` | Whether to push container images to registry |
+| `--output-dir` | `/outputs` | Directory for build artifacts (`.tgz` files and container images) |
+| `--push-images` / `--no-push-images` | `true` | Whether to push container images to registry. Defaults to not pushing if no argument is provided |
+| `--use-local` | `false` | Use local repository instead of cloning from source.json |
 | `--log-level` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `--verbose` | `false` | Show verbose output with file and line numbers |
 
@@ -304,10 +312,7 @@ podman run --rm -it \
   -e REGISTRY_PASSWORD=mytoken \
   -e REGISTRY_NAMESPACE=mynamespace \
   rhdh-dynamic-plugin-factory:latest \
-  --config-dir /config \
-  --repo-path /workspace \
   --workspace-path workspaces/announcements \
-  --output-dir /outputs \
   --push-images
 ```
 
@@ -322,7 +327,6 @@ podman run --rm -it \
   -v ./outputs:/outputs:z \
   --env-file ./config/.env \
   rhdh-dynamic-plugin-factory:latest \
-  --config-dir /config \
   --repo-path /workspace \
   --workspace-path workspaces/announcements \
   --output-dir /outputs \
@@ -331,21 +335,20 @@ podman run --rm -it \
 
 #### Using a local repository (skip cloning)
 
-TODO: Add CLI option to set priority for this option when `source.json` exists
-
-If you already have the source code locally:
+If you already have the source code locally, use the `--use-local` flag to skip cloning from `source.json` AND/OR not include `source.json` in the config folder:
 
 **Local Execution:**
 
 ```bash
-# Remove or don't create source.json in config/
 # Ensure workspace already exists at --repo-path
+# The --use-local flag will skip cloning even if source.json exists
 
 python -m rhdh_dynamic_plugin_factory.cli \
   --config-dir ./config \
   --repo-path ./existing-workspace \
   --workspace-path . \
   --output-dir ./outputs \
+  --use-local \
   --no-push-images
 ```
 
@@ -361,9 +364,11 @@ podman run --rm -it \
   rhdh-dynamic-plugin-factory:latest \
   --config-dir /config \
   --workspace-path . \
-  --output-dir /outputs \
+  --use-local \
   --no-push-images
 ```
+
+**Note:** When using `--use-local`, patches and overlays will still be applied to your local repository. Make sure you have backups or are using version control before running the tool with a local repository.
 
 ## Output
 
@@ -435,7 +440,6 @@ python -m rhdh_dynamic_plugin_factory.cli \
   --repo-path ./workspace \
   --workspace-path . \
   --output-dir ./outputs \
-  --no-push-images
 ```
 
 **Container Execution:**
@@ -448,7 +452,6 @@ podman run --rm -it \
   -v ./outputs:/outputs:z \
   rhdh-dynamic-plugin-factory:latest \
   --workspace-path . \
-  --no-push-images
 ```
 
 ### AWS ECS Workspace Example
@@ -465,7 +468,6 @@ python -m rhdh_dynamic_plugin_factory.cli \
   --repo-path ./workspace \
   --workspace-path . \
   --output-dir ./outputs \
-  --no-push-images
 ```
 
 **Container Execution:**
@@ -478,7 +480,6 @@ podman run --rm -it \
   -v ./outputs:/outputs:z \
   rhdh-dynamic-plugin-factory:latest \
   --repo-path /workspace \
-  --no-push-images
 ```
 
 ## Development
