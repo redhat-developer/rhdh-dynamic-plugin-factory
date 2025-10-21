@@ -8,3 +8,9 @@ workspace/
 .cursor/
 **/__pycache__/
 requirements.dev.txt
+tests/
+pytest.ini
+.pytest_cache/
+*.pyc
+htmlcov/
+.coverage

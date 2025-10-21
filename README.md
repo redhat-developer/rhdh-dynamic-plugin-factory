@@ -498,8 +498,37 @@ rhdh-dynamic-plugin-factory/
 
 ### Running Tests
 
-TODO: Add Unit Tests
+#### Run all tests
+
+```bash
+pytest tests/
+```
+
+#### Run tests with verbose output
+
+```bash
+pytest tests/ -v
+```
+
+#### Run tests for a specific module
+
+```bash
+pytest tests/test_config.py -v
+```
+
+#### Run a specific test class or method
+
+```bash
+pytest tests/test_config.py::TestPluginFactoryConfigLoadFromEnv -v
+pytest tests/test_config.py::TestPluginFactoryConfigLoadFromEnv::test_load_from_env_valid_configuration -v
+```
+
+#### Run with coverage reporting
+
+```bash
+pytest tests/ --cov=src/rhdh_dynamic_plugin_factory --cov-report=term-missing
+```
 
 ## Resources
 
-TODO: Add Further Readings
+To learn more about how dynamic plugins work refer to the [dynamic plugins documentation](https://github.com/redhat-developer/rhdh/blob/main/docs/dynamic-plugins/index.md) in the RHDH Repository

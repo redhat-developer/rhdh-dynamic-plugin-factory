@@ -265,9 +265,8 @@ class PluginFactoryConfig:
         source_config = self.discover_source_config()
         if source_config:
             self.logger.info(f"Found source configuration")
-            self.logger.info(f"  Repository: {source_config.get_repo_owner_and_name()}")
+            self.logger.info(f"  Repository: {source_config.repo}")
             self.logger.info(f"  Reference: {source_config.repo_ref}")
-            self.logger.info(f"  Backstage version: {source_config.repo_backstage_version}")
         
         # Check for plugins-list.yaml
         plugins_list_file = self.config_dir / "plugins-list.yaml"
@@ -431,30 +430,12 @@ class SourceConfig:
         )
 
         # Validate all required fields are set
-
+        if not config.repo:
+            raise ValueError("repo is required")
+        if not config.repo_ref:
+            raise ValueError("repo_ref is required")
+        
         return config
-    
-    def get_repo_owner_and_name(self) -> str:
-        """Extract owner/repo format from GitHub URL."""
-        if self.repo.startswith("https://github.com/"):
-            return self.repo.replace("https://github.com/", "")
-        elif self.repo.startswith("http://github.com/"):
-            return self.repo.replace("http://github.com/", "")
-        elif self.repo.startswith("git@github.com:"):
-            return self.repo.replace("git@github.com:", "").replace(".git", "")
-        else:
-            # Assume it's already in owner/repo format
-            return self.repo
-    
-    def get_repo_url(self) -> str:
-        """Get the full repository URL."""
-        if self.repo.startswith("http"):
-            return self.repo
-        elif "/" in self.repo and not self.repo.startswith("git@"):
-            # Convert owner/repo to GitHub URL
-            return f"https://github.com/{self.repo}"
-        else:
-            return self.repo
     
     def clone_to_path(self, repo_path: Path) -> bool:
         """Clone the source repository to the specified path."""
@@ -465,12 +446,12 @@ class SourceConfig:
             return True
         
         self.logger.info(f"[bold blue]Cloning repository[/bold blue]")
-        self.logger.info(f"Repository: {self.get_repo_owner_and_name()}")
+        self.logger.info(f"Repository: {self.repo}")
         self.logger.info(f"Reference: {self.repo_ref}")
         self.logger.info(f"Workspace: {repo_path}")
             
         try:
-            cmd = ["git", "clone", self.get_repo_url(), str(repo_path)]
+            cmd = ["git", "clone", self.repo, str(repo_path)]
             # Git writes progress to stderr, so log it as info instead of error
             returncode = run_command_with_streaming(
                 cmd,
