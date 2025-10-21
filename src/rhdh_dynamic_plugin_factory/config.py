@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 import yaml
 import json
+import subprocess
+
 from .logger import get_logger
 from .utils import run_command_with_streaming, display_export_results
 
@@ -119,7 +121,6 @@ class PluginFactoryConfig:
         Load registry configuration from environment variables and attempt buildah login.
         Only validates required registry fields if `push_images` is True.
         """
-        import subprocess
         # Only validate registry configuration if we're pushing images
         if not push_images:
             self.logger.info("Skipping registry configuration (not pushing images)")
@@ -175,8 +176,10 @@ class PluginFactoryConfig:
                 )
             else:
                 self.logger.warning(
-                    f"source.json not found at {source_file}. Attempting to use local repository content at {self.repo_path}"
+                    f"source.json not found at {source_file}. Will attempt to use local repository content at {self.repo_path}"
                 )
+        else:
+            self.logger.debug(f"Using source configuration from: {source_file}")
     
     def _validate_plugins_list(self) -> None:
         """Validate plugins-list.yaml file existence."""
@@ -186,6 +189,8 @@ class PluginFactoryConfig:
             self.logger.warning(
                 f"plugins-list.yaml not found at {plugins_file}. Will attempt to auto-generate after repository is available."
             )
+        else:
+            self.logger.debug(f"Using plugins-list.yaml from: {plugins_file}")
     
     def auto_generate_plugins_list(self) -> bool:
         """
@@ -198,7 +203,7 @@ class PluginFactoryConfig:
         plugins_file = self.config_dir / "plugins-list.yaml"
         
         if plugins_file.exists():
-            self.logger.info(f"[green]✓ plugins-list.yaml already exists at {plugins_file}[/green]")
+            self.logger.debug(f"[green]✓ plugins-list.yaml already exists at {plugins_file}. Skipping auto-generation.[/green]")
             return True
         
         self.logger.info("[bold blue]Auto-generating plugins-list.yaml[/bold blue]")
@@ -212,14 +217,15 @@ class PluginFactoryConfig:
                 self.logger.error(f"[red]Workspace does not exist at {workspace_path}[/red]")
                 return False
             
+            # TODO: Implement PluginListConfig.create_default function
             plugin_cfg = PluginListConfig.create_default(workspace_path=workspace_path)
             plugin_cfg.to_file(plugins_file)
             
             plugins = plugin_cfg.get_plugins()
             if plugins:
                 self.logger.info(f"Generated plugins-list.yaml with {len(plugins)} plugins")
-                for plugin_path in plugins.keys():
-                    self.logger.info(f"  - {plugin_path}")
+                for plugin_path, build_args in plugins.items():
+                    self.logger.info(f"  - {plugin_path}: {build_args}")
             else:
                 self.logger.warning("No plugins found in workspace")
             
@@ -236,13 +242,13 @@ class PluginFactoryConfig:
         if source_file.exists() and not self.use_local:
             try:
                 source_config = SourceConfig.from_file(source_file)
-                self.logger.info(f"Using source config from: {source_config}")
+                self.logger.debug(f"Using source config from: {source_config}")
                 return source_config
             except Exception as e:
                 self.logger.error(f"[red]Failed to load {source_file}: {e}[/red]")
                 sys.exit(1)
         elif self.repo_path and self.repo_path.exists():
-            self.logger.info("Source configuration not found, will attempt to use locally stored plugin source code")
+            self.logger.warning("Source configuration not found, will attempt to use locally stored plugin source code")
         else:
             self.logger.error(
                 f"[red]No valid source configuration found and {self.repo_path} is empty or does not exist[/red]"
@@ -272,9 +278,10 @@ class PluginFactoryConfig:
         plugins_list_file = self.config_dir / "plugins-list.yaml"
         
         if plugins_list_file.exists():
-            self.logger.debug(f"Using plugin list file: {plugins_list_file}")
+            self.logger.info(f"Using plugin list file: {plugins_list_file}")
+            self.logger.info(f"  Plugins: {plugins_list_file.read_text()}")
         else:
-            self.logger.debug(f"plugins-list.yaml not found, will auto-generate after repository is available")
+            self.logger.warning(f"{plugins_list_file} not found, will auto-generate after repository is available")
         return source_config
     
     def apply_patches_and_overlays(self) -> bool:
@@ -317,9 +324,7 @@ class PluginFactoryConfig:
             return False
     
     def export_plugins(self, output_dir: Path, push_images: bool) -> bool:
-        """Export plugins using export-workspace.sh script."""
-        self.logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
-        
+        """Export plugins using export-workspace.sh script."""        
         script_dir = Path(__file__).parent.parent.parent / "scripts"
         script_path = script_dir / "export-workspace.sh"
         
@@ -366,13 +371,21 @@ class PluginFactoryConfig:
         workspace_path = self.repo_path.joinpath(self.workspace_path).absolute()
         try:
             # Stream output in real-time
-            # Use error logging for export-workspace.sh script
+            # Use error logging only for lines containing "Error", otherwise use info
+            def conditional_stderr_log(line: str) -> None:
+                if "Error" in line:
+                    self.logger.error(line)
+                if "npm warn" in line:
+                    self.logger.warning(line)
+                else:
+                    self.logger.info(line)
+            
             returncode = run_command_with_streaming(
                 [str(script_path.absolute())],
                 self.logger,
                 cwd=workspace_path,
                 env=env,
-                stderr_log_func=self.logger.error
+                stderr_log_func=conditional_stderr_log
             )
             
             if returncode != 0:
@@ -442,13 +455,13 @@ class SourceConfig:
         logger = get_logger("cli")
         
         if not repo_path.exists():
-            self.logger.error(f"[red]Workspace does not exist: {repo_path}[/red]")
+            self.logger.error(f"[red]Destination directory does not exist: {repo_path}[/red]")
             return True
         
         self.logger.info(f"[bold blue]Cloning repository[/bold blue]")
         self.logger.info(f"Repository: {self.repo}")
         self.logger.info(f"Reference: {self.repo_ref}")
-        self.logger.info(f"Workspace: {repo_path}")
+        self.logger.info(f"Destination directory: {repo_path}")
             
         try:
             cmd = ["git", "clone", self.repo, str(repo_path)]
@@ -479,7 +492,7 @@ class SourceConfig:
                     logger.error(f"Failed to checkout ref {self.repo_ref} (exit code {returncode})")
                     return False
             
-            logger.info("[green]Repository cloned successfully[/green]")
+            logger.info("[green]✓ Repository cloned successfully[/green]")
             return True
             
         except Exception as e:

@@ -29,7 +29,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
         # Build plugins for the todo workspace in backstage/community-plugins w/o pushing to a registry
         # This assumes that ./config is populated with the required source.json and plugins-list.yaml files
-        python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./workspace --no-push-images --workspace-path workspaces/todo --log-level DEBUG --output-dir ./outputs
+        python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./workspace --workspace-path workspaces/todo --log-level DEBUG --output-dir ./outputs
         """
     )
     
@@ -83,7 +83,6 @@ Examples:
     )
     return parser
 
-
 def install_dependencies(workspace_path: Path) -> bool:
     """Install dependencies in the workspace using yarn install with corepack."""
     logger.info("[bold blue]Installing workspace dependencies[/bold blue]")
@@ -97,7 +96,6 @@ def install_dependencies(workspace_path: Path) -> bool:
         (["yarn", "tsc"], "Running TypeScript compilation"),
     ]
         
-
     try:
         # Set up environment for non-interactive corepack
         env = os.environ.copy()
@@ -138,25 +136,23 @@ def main():
 
     try:
         config.load_registry_config(push_images=args.push_images)
+        source_config = config.setup_config_directory()
     except Exception as e:
         config.logger.error(f"[red]Configuration error: {e}[/red]")
         sys.exit(1)
     
-    # Phase 1: Setup configuration directory
-    source_config = config.setup_config_directory()
-    
-    # Phase 2: Determine source configuration
-    logger.info("[bold blue]Source Configuration[/bold blue]")
-
-    # Phase 3: Clone repository if needed
+    # Clone repository if needed
     if source_config and not config.use_local:
         logger.info("[bold blue]Repository Setup[/bold blue]")
         if not source_config.clone_to_path(config.repo_path):
             logger.error("Failed to clone repository")
             sys.exit(1)
     elif config.use_local or not source_config:
+        if config.use_local:
+            logger.info("[bold blue]--use-local flag is set, using local repository[/bold blue]")
+        else:
+            logger.info("[bold blue]No source configuration found, using local repository[/bold blue]")
         # Use local repository (either --use-local flag or no source_config)
-        logger.info("[bold blue]Using local repository[/bold blue]")
         if not config.repo_path.exists():
             logger.error(f"Local repository does not exist at: {config.repo_path}")
             logger.error("Either provide source.json to clone the repository, or ensure workspace exists at directory specified by --repo-path")
@@ -168,23 +164,23 @@ def main():
         logger.error("Failed to generate plugins list")
         sys.exit(1)
     
-    # Phase 4: Apply patches and overlays
+    # Apply patches and overlays
     logger.info("[bold blue]Applying Patches and Overlays[/bold blue]")
     if not config.apply_patches_and_overlays():
         logger.error("Failed to apply patches and overlays")
         sys.exit(1)
 
     
-    # Phase 4.5: Install Dependencies
+    # Install Dependencies
     logger.info("[bold blue]Installing Dependencies[/bold blue]")
     
-    workspace_path = repo_path.joinpath(config.workspace_path).absolute()
+    workspace_path = config.repo_path.joinpath(config.workspace_path).absolute()
     if not install_dependencies(workspace_path):
         logger.error("Failed to install dependencies")
         sys.exit(1)
     
-    # Phase 5: Export plugins
-    logger.info("[bold blue]Exporting Plugins[/bold blue]")
+    # Export plugins
+    logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
     if not config.export_plugins(args.output_dir, args.push_images):
         logger.error("Plugin export failed")
         sys.exit(1)
