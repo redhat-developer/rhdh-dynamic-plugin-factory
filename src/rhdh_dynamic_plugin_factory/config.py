@@ -133,35 +133,36 @@ class PluginFactoryConfig:
         if not self.registry_namespace:
             raise ValueError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
         
-        # Attempt buildah login if credentials are available
-        if self.registry_username and self.registry_password:
-            try:
-                cmd = [
-                    "buildah", "login",
-                    "--username", str(self.registry_username),
-                    "--password", str(self.registry_password)
-                ]
-                
-                # Add insecure flag if needed
-                if self.registry_insecure:
-                    cmd.extend(["--tls-verify=false"])
-                    
-                cmd.append(str(self.registry_url))
-                
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                self.logger.info(f"Logged in to registry {self.registry_url} with buildah.")
-            except subprocess.CalledProcessError as e:
-                self.logger.warning(
-                    f"Failed to login to registry {self.registry_url} with buildah: {e.stderr.decode().strip()}"
-                )
+        # Validate registry credentials are required for push operations
+        if not self.registry_username or not self.registry_password:
+            raise ValueError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
         ## TODO: Add support for token logins for ghcr.io registry as well
-        else:
-            self.logger.info("Registry credentials not provided, skipping buildah login.")
+
+        # Attempt buildah login with credentials
+        try:
+            cmd = [
+                "buildah", "login",
+                "--username", str(self.registry_username),
+                "--password", str(self.registry_password)
+            ]
+            
+            # Add insecure flag if needed
+            if self.registry_insecure:
+                cmd.extend(["--tls-verify=false"])
+                
+            cmd.append(str(self.registry_url))
+            
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            self.logger.info(f"Logged in to registry {self.registry_url} with buildah.")
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(
+                f"Failed to login to registry {self.registry_url} with buildah: {e.stderr.decode().strip()}"
+            )
     
     def _validate_source_json(self) -> None:
         """Validate source.json file existence and repo_path state."""

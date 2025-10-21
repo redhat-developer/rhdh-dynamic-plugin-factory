@@ -6,8 +6,9 @@ without executing shell scripts.
 """
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import pytest
+import subprocess
 
 from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
 
@@ -284,4 +285,278 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config is not None
         assert config.config_dir == config_dir
         assert config.repo_path == repo_path
+
+
+class TestLoadRegistryConfig:
+    """Tests for PluginFactoryConfig.load_registry_config method."""
+    
+    def test_skip_when_push_images_false(self, setup_test_env, monkeypatch):
+        """Test that registry configuration is skipped when push_images is False."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create a minimal config without registry settings
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        
+        # Mock the logger to verify log messages
+        with patch.object(config, 'logger') as mock_logger:
+            config.load_registry_config(push_images=False)
+            
+            # Verify info log was called with skip message
+            mock_logger.info.assert_called_once_with(
+                "Skipping registry configuration (not pushing images)"
+            )
+    
+    def test_missing_registry_url(self, setup_test_env, monkeypatch):
+        """Test that missing REGISTRY_URL raises ValueError when push_images is True."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config without registry_url but with namespace
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = None
+        config.registry_namespace = "test-namespace"
+        
+        with pytest.raises(ValueError, match="REGISTRY_URL environment variable is required"):
+            config.load_registry_config(push_images=True)
+    
+    def test_missing_registry_namespace(self, setup_test_env, monkeypatch):
+        """Test that missing REGISTRY_NAMESPACE raises ValueError when push_images is True."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config with registry_url but without namespace
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "quay.io"
+        config.registry_namespace = None
+        
+        with pytest.raises(ValueError, match="REGISTRY_NAMESPACE environment variable is required"):
+            config.load_registry_config(push_images=True)
+    
+    def test_successful_buildah_login(self, setup_test_env, monkeypatch):
+        """Test successful buildah login with valid credentials."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config with full registry configuration
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "quay.io"
+        config.registry_namespace = "test-namespace"
+        config.registry_username = "test-user"
+        config.registry_password = "test-password"
+        config.registry_insecure = False
+        
+        # Mock subprocess.run to simulate successful login
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            
+            # Mock the logger to verify log messages
+            with patch.object(config, 'logger') as mock_logger:
+                config.load_registry_config(push_images=True)
+                
+                # Verify buildah command was called correctly
+                mock_run.assert_called_once()
+                call_args = mock_run.call_args
+                
+                expected_cmd = [
+                    "buildah", "login",
+                    "--username", "test-user",
+                    "--password", "test-password",
+                    "quay.io"
+                ]
+                assert call_args[0][0] == expected_cmd
+                assert call_args[1]['check'] is True
+                assert call_args[1]['stdout'] == subprocess.PIPE
+                assert call_args[1]['stderr'] == subprocess.PIPE
+                
+                # Verify success log message
+                mock_logger.info.assert_called_with(
+                    "Logged in to registry quay.io with buildah."
+                )
+    
+    def test_failed_buildah_login(self, setup_test_env, monkeypatch):
+        """Test that failed buildah login logs warning but doesn't raise."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config with full registry configuration
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "quay.io"
+        config.registry_namespace = "test-namespace"
+        config.registry_username = "test-user"
+        config.registry_password = "wrong-password"
+        config.registry_insecure = False
+        
+        # Mock subprocess.run to simulate failed login
+        with patch('subprocess.run') as mock_run:
+            mock_error = subprocess.CalledProcessError(
+                returncode=1,
+                cmd=['buildah', 'login'],
+                stderr=b"Authentication failed"
+            )
+            mock_run.side_effect = mock_error
+            
+            # Mock the logger to verify warning message
+            with patch.object(config, 'logger') as mock_logger:
+                # Should not raise, just log warning
+                config.load_registry_config(push_images=True)
+                
+                # Verify warning log message
+                mock_logger.warning.assert_called_once()
+                warning_call = mock_logger.warning.call_args[0][0]
+                assert "Failed to login to registry quay.io" in warning_call
+                assert "Authentication failed" in warning_call
+    
+    def test_missing_registry_credentials(self, setup_test_env, monkeypatch):
+        """Test that missing credentials raise ValueError when push_images is True."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config without credentials
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "quay.io"
+        config.registry_namespace = "test-namespace"
+        config.registry_username = None
+        config.registry_password = None
+        config.registry_insecure = False
+        
+        with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
+            config.load_registry_config(push_images=True)
+    
+    def test_missing_registry_username(self, setup_test_env, monkeypatch):
+        """Test that missing username raises ValueError when push_images is True."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config without username
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "quay.io"
+        config.registry_namespace = "test-namespace"
+        config.registry_username = None
+        config.registry_password = "test-password"
+        config.registry_insecure = False
+        
+        with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
+            config.load_registry_config(push_images=True)
+    
+    def test_missing_registry_password(self, setup_test_env, monkeypatch):
+        """Test that missing password raises ValueError when push_images is True."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config without password
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "quay.io"
+        config.registry_namespace = "test-namespace"
+        config.registry_username = "test-user"
+        config.registry_password = None
+        config.registry_insecure = False
+        
+        with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
+            config.load_registry_config(push_images=True)
+    
+    def test_insecure_registry_flag(self, setup_test_env, monkeypatch):
+        """Test that insecure flag is added to buildah command when registry_insecure is True."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config with insecure registry
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "localhost:5000"
+        config.registry_namespace = "test-namespace"
+        config.registry_username = "test-user"
+        config.registry_password = "test-password"
+        config.registry_insecure = True
+        
+        # Mock subprocess.run to capture the command
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            
+            config.load_registry_config(push_images=True)
+            
+            # Verify buildah command includes --tls-verify=false
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args
+            
+            expected_cmd = [
+                "buildah", "login",
+                "--username", "test-user",
+                "--password", "test-password",
+                "--tls-verify=false",
+                "localhost:5000"
+            ]
+            assert call_args[0][0] == expected_cmd
+    
+    def test_secure_registry_default(self, setup_test_env, monkeypatch):
+        """Test that insecure flag is NOT added when registry_insecure is False."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        
+        # Create config with secure registry (default)
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["workspace_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = Path(".")
+        config.registry_url = "quay.io"
+        config.registry_namespace = "test-namespace"
+        config.registry_username = "test-user"
+        config.registry_password = "test-password"
+        config.registry_insecure = False
+        
+        # Mock subprocess.run to capture the command
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            
+            config.load_registry_config(push_images=True)
+            
+            # Verify buildah command does NOT include --tls-verify=false
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args
+            
+            expected_cmd = [
+                "buildah", "login",
+                "--username", "test-user",
+                "--password", "test-password",
+                "quay.io"
+            ]
+            assert call_args[0][0] == expected_cmd
+            # Verify --tls-verify=false is NOT in the command
+            assert "--tls-verify=false" not in call_args[0][0]
 
