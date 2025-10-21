@@ -1,0 +1,314 @@
+---
+description: Shell script code quality standards based on Google's Shell Style Guide
+globs: ["**/*.sh", "**/scripts/**"]
+alwaysApply: false
+---
+
+# Shell Script Code Quality Standards
+
+This document outlines code quality standards for shell scripts based on Google's Shell Style Guide. These standards ensure consistency, maintainability, and reliability across shell scripts in the project.
+
+## 1. Shell Selection and File Structure
+
+### Shell Choice
+- **ALWAYS** use Bash for executable shell scripts
+- Start executable scripts with `#!/bin/bash`
+- Use minimal flags in the shebang line
+- Use `set` to configure shell options for script reliability
+
+### File Extensions
+- Executables: Use `.sh` extension or no extension
+  - `.sh` extension when build rules rename the source file
+  - No extension when added directly to user's `PATH`
+- Libraries: Must have `.sh` extension and should NOT be executable
+
+### Security
+- **FORBIDDEN**: SUID/SGID on shell scripts
+- Use `sudo` for elevated access when needed
+
+## 2. Code Organization
+
+### File Header
+Every script must start with:
+```bash
+#!/bin/bash
+#
+# Brief description of the script's purpose
+# Copyright (optional)
+# Author information (optional)
+```
+
+### Function Organization
+- Place all functions together near the top of the file (after constants)
+- Don't hide executable code between functions
+- Order: includes → `set` statements → constants → functions → main execution
+
+### Main Function Pattern
+For scripts with multiple functions, use a `main` function:
+```bash
+main() {
+  # Main program logic here
+}
+
+# Last line of the file
+main "$@"
+```
+
+## 3. Variables and Constants
+
+### Variable Naming
+- Functions and variables: `lowercase_with_underscores`
+- Constants and environment variables: `UPPERCASE_WITH_UNDERSCORES`
+- Loop variables should be descriptive: `for zone in "${zones[@]}"`
+
+### Variable Declaration
+- Use `local` for function-specific variables
+- Declare constants with `readonly` at the top of the file
+- Separate declaration and assignment when using command substitution:
+```bash
+local my_var
+my_var="$(command)"
+(( $? == 0 )) || return
+```
+
+### Constants
+```bash
+# Constant
+readonly PATH_TO_FILES='/some/path'
+
+# Exported constant
+declare -xr ORACLE_SID='PROD'
+```
+
+## 4. Functions
+
+### Function Naming
+- Use `lowercase_with_underscores`
+- Library functions: Use `package::function_name` format
+- Parentheses required after function name
+- Braces on same line as function name
+
+```bash
+# Single function
+my_function() {
+  local param="$1"
+  # Function body
+}
+
+# Library function
+mypackage::my_function() {
+  # Function body
+}
+```
+
+### Function Comments
+Document functions with:
+- Purpose and behavior
+- Input parameters
+- Output/return values
+- Example usage if complex
+
+## 5. Control Flow and Logic
+
+### Conditionals
+- Use `[[ ]]` for tests (preferred over `[ ]`)
+- Quote variables in tests
+- Use `(( ))` for arithmetic comparisons
+
+```bash
+# String tests
+if [[ "${variable}" == "value" ]]; then
+  # Action
+fi
+
+# Arithmetic tests
+if (( a < b )); then
+  # Action
+fi
+```
+
+### Loops
+```bash
+# Array iteration
+for item in "${array[@]}"; do
+  something_with "${item}"
+done
+
+# Numeric iteration
+for (( i=0; i<10; i++ )); do
+  # Action
+done
+```
+
+## 6. String Handling and Quoting
+
+### Quoting Rules
+- **ALWAYS** quote variables: `"${variable}"`
+- Quote command substitutions: `"$(command)"`
+- Use `${var}` instead of `$var` for clarity
+- Quote literal strings containing spaces or special characters
+
+### String Operations
+Prefer built-in parameter expansion over external commands:
+```bash
+# Good - built-in expansion
+substitution="${string/#foo/bar}"
+
+# Avoid - external command
+substitution="$(echo "${string}" | sed -e 's/^foo/bar/')"
+```
+
+## 7. Error Handling
+
+### Return Value Checking
+Always check return values:
+```bash
+# Direct check
+if ! command; then
+  echo "Error: command failed" >&2
+  exit 1
+fi
+
+# Check $?
+command
+if (( $? != 0 )); then
+  echo "Error: command failed" >&2
+  exit 1
+fi
+```
+
+### Error Messages
+- Send all error messages to STDERR
+- Include timestamps and context
+- Use descriptive error messages
+
+```bash
+err() {
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2
+}
+
+if ! do_something; then
+  err "Unable to do_something: ${reason}"
+  exit 1
+fi
+```
+
+### Pipeline Error Handling
+Use `PIPESTATUS` for pipeline error checking:
+```bash
+command1 | command2 | command3
+return_codes=( "${PIPESTATUS[@]}" )
+if (( return_codes[0] != 0 )); then
+  handle_command1_error
+fi
+```
+
+## 8. Formatting Standards
+
+### Indentation
+- Use 2 spaces for indentation
+- No tabs
+- Consistent indentation throughout
+
+### Line Length
+- Aim for 80 characters per line
+- Break long lines logically
+- Align continuation lines appropriately
+
+### Pipelines
+```bash
+# Long pipelines - one command per line
+command1 \
+  | command2 \
+  | command3
+```
+
+## 9. Best Practices
+
+### Command Preferences
+- Prefer shell built-ins over external commands
+- Use `(( ))` for arithmetic operations
+- Avoid `expr`, `let`, and `$[ ]` for arithmetic
+- Use `[[` instead of `[` for tests
+
+### Arrays
+```bash
+# Array declaration
+declare -a array_name
+
+# Array usage
+array_name=("item1" "item2" "item3")
+for item in "${array_name[@]}"; do
+  echo "${item}"
+done
+```
+
+### Avoid
+- Aliases in scripts (use functions instead)
+- `eval` (security risk)
+- Unquoted variables
+- Global variables when local will suffice
+
+## 10. Documentation and Comments
+
+### Comment Requirements
+- File header with purpose
+- Function documentation
+- Complex logic explanation
+- TODO comments for future improvements
+
+### Comment Format
+```bash
+# Single line comment
+
+#######################################
+# Description of function
+# Globals:
+#   GLOBAL_VAR
+# Arguments:
+#   $1: Description of first argument
+# Returns:
+#   0 if successful, 1 on error
+#######################################
+function_name() {
+  # Implementation
+}
+```
+
+## 11. Testing and Validation
+
+### ShellCheck
+- Use ShellCheck for static analysis
+- Address all ShellCheck warnings
+- Add suppressions only with justification
+
+### Testing
+- Test scripts with different inputs
+- Test error conditions
+- Verify exit codes
+- Test on target environments
+
+## 12. Performance Considerations
+
+### Efficiency Guidelines
+- Minimize external command calls
+- Use built-in parameter expansion
+- Avoid unnecessary subshells
+- Cache expensive operations
+
+### When NOT to Use Shell
+- Scripts longer than 100 lines
+- Complex data manipulation
+- Performance-critical applications
+- Non-straightforward control flow
+
+## 13. Consistency Rules
+
+- Follow established patterns in the codebase
+- Use consistent naming conventions
+- Maintain uniform formatting
+- Document deviations from standards with justification
+
+---
+
+**Remember**: These standards prioritize readability, maintainability, and reliability. When in doubt, choose the approach that makes the code clearer and more robust.

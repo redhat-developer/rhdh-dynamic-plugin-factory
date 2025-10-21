@@ -1,0 +1,16 @@
+# Python Caches
+**/__pycache__
+
+# Local Configuration Folders
+config/
+workspace/
+outputs/
+
+# VSCode
+.vscode/
+
+# Tests
+tests/.pytest_cache/
+tests/htmlcov/
+tests/.coverage
+.coverage

@@ -1,0 +1,309 @@
+---
+description: Documentation standards and Google Style docstring requirements and Google Shell Style
+globs: ["**/*.py", "**/*.sh", "**/scripts/**", "**/*.md"]
+alwaysApply: false
+---
+
+# Documentation Standards
+
+## Bash/Shell Script Documentation (Google Shell Style Guide)
+
+### File Header Requirements
+Every shell script must start with a comprehensive header:
+```bash
+#!/bin/bash
+#
+# Brief description of the script's purpose and functionality.
+# 
+# This script performs [detailed description of what it does].
+# Usage: script_name [OPTIONS] [ARGUMENTS]
+#
+# Options:
+#   -h, --help     Show this help message
+#   -v, --verbose  Enable verbose output
+#
+# Examples:
+#   ./script_name --verbose input.txt
+#   ./script_name -h
+#
+# Author: [Name] <email@example.com> (optional)
+# Created: YYYY-MM-DD (optional)
+# License: [License] (optional)
+```
+
+### Function Documentation Format
+All non-trivial functions must include comprehensive documentation:
+```bash
+#######################################
+# Brief description of the function (one line).
+#
+# Longer description if needed. Explain the purpose,
+# behavior, and any important details about the function.
+#
+# Globals:
+#   GLOBAL_VAR1: Description of how it's used/modified
+#   GLOBAL_VAR2: Description of how it's used/modified
+# Arguments:
+#   $1: Description of first parameter (type if relevant)
+#   $2: Description of second parameter (type if relevant)
+#   $@: Description if function accepts variable arguments
+# Outputs:
+#   Writes [description] to stdout
+#   Writes error messages to stderr
+# Returns:
+#   0 if successful
+#   1 if [specific error condition]
+#   2 if [another specific error condition]
+# Examples:
+#   cleanup_temp_files "/tmp/myapp"
+#   if cleanup_temp_files "${TEMP_DIR}"; then
+#     echo "Cleanup successful"
+#   fi
+#######################################
+function_name() {
+  # Function implementation
+}
+```
+
+### Documentation Requirements by Function Type
+
+#### Simple Functions (< 10 lines, obvious purpose)
+```bash
+#######################################
+# Delete a file safely with error checking.
+# Arguments:
+#   $1: File path to delete
+# Returns:
+#   0 if successful, 1 on error
+#######################################
+delete_file() {
+  rm "$1"
+}
+```
+
+#### Complex Functions (> 10 lines or non-obvious logic)
+```bash
+#######################################
+# Process log files and extract error patterns.
+#
+# Scans through log files in the specified directory,
+# extracts error patterns matching the given regex,
+# and generates a summary report.
+#
+# Globals:
+#   LOG_DIR: Base directory for log files
+#   ERROR_PATTERNS: Array of regex patterns to match
+# Arguments:
+#   $1: Target directory to scan (overrides LOG_DIR)
+#   $2: Output file for the report (optional, defaults to stdout)
+# Outputs:
+#   Writes summary report to stdout or specified file
+#   Writes progress messages to stderr
+# Returns:
+#   0 if successful and errors found
+#   1 if no log files found
+#   2 if permission denied
+#   3 if invalid directory specified
+# Examples:
+#   process_log_errors "/var/log/myapp"
+#   process_log_errors "/var/log/myapp" "error_report.txt"
+#######################################
+process_log_errors() {
+  # Complex implementation
+}
+```
+
+### Implementation Comments
+- Comment complex logic, algorithms, or non-obvious code sections
+- Use single-line comments for brief explanations
+- Use multi-line comments for complex explanations
+```bash
+# Check if we need to rotate logs (single line comment)
+if [[ "${log_size}" -gt "${MAX_LOG_SIZE}" ]]; then
+  rotate_logs
+fi
+
+# Complex algorithm explanation:
+# We use a two-pass approach here because the first pass
+# identifies all the files that need processing, and the
+# second pass actually processes them. This prevents
+# issues with files being modified during processing.
+for file in "${files_to_process[@]}"; do
+  # Process each file
+done
+```
+
+### TODO Comments
+Format TODO comments consistently:
+```bash
+# TODO(username): Add support for compressed log files
+# TODO(username): Optimize this algorithm for large datasets
+# BUG(username): This doesn't handle edge case when file is empty
+# FIXME(username): Memory leak in this function
+```
+
+### Variable and Constant Documentation
+Document important variables, especially globals:
+```bash
+# Global configuration variables
+readonly CONFIG_FILE="/etc/myapp/config.conf"  # Main configuration file
+readonly DEFAULT_TIMEOUT=30                     # Default timeout in seconds
+readonly MAX_RETRIES=3                         # Maximum number of retry attempts
+
+# Application state variables
+declare -g CURRENT_USER=""     # Currently logged-in user
+declare -g SESSION_ID=""       # Current session identifier
+declare -gi DEBUG_LEVEL=0      # Debug verbosity level (0-3)
+```
+
+### Error Handling Documentation
+Document error conditions and handling:
+```bash
+#######################################
+# Connect to database with retry logic.
+#
+# Attempts to establish database connection with
+# exponential backoff retry strategy.
+#
+# Globals:
+#   DB_HOST: Database hostname
+#   DB_PORT: Database port
+#   MAX_RETRIES: Maximum connection attempts
+# Returns:
+#   0 if connection successful
+#   1 if authentication failed
+#   2 if host unreachable
+#   3 if maximum retries exceeded
+# Examples:
+#   if ! connect_to_database; then
+#     case $? in
+#       1) echo "Check credentials" ;;
+#       2) echo "Check network" ;;
+#       3) echo "Service unavailable" ;;
+#     esac
+#   fi
+#######################################
+connect_to_database() {
+  # Implementation with documented error codes
+}
+```
+
+### Script Usage Documentation
+For scripts intended for end-user execution:
+```bash
+#######################################
+# Display usage information and exit.
+# 
+# Prints comprehensive usage information including
+# all available options, arguments, and examples.
+#
+# Arguments:
+#   None
+# Outputs:
+#   Writes usage information to stdout
+# Returns:
+#   Always exits with code 0
+#######################################
+show_usage() {
+  cat << EOF
+Usage: $(basename "$0") [OPTIONS] [ARGUMENTS]
+
+Description:
+  Brief description of what this script does.
+
+Options:
+  -h, --help        Show this help message and exit
+  -v, --verbose     Enable verbose output
+  -c, --config FILE Use specified configuration file
+  -d, --dry-run     Show what would be done without executing
+
+Arguments:
+  input_file        Input file to process
+  output_dir        Directory for output files
+
+Examples:
+  $(basename "$0") --verbose input.txt /tmp/output
+  $(basename "$0") --config custom.conf --dry-run input.txt
+  $(basename "$0") --help
+
+Environment Variables:
+  MYAPP_CONFIG      Override default config file location
+  MYAPP_DEBUG       Set to 1 to enable debug output
+
+Exit Codes:
+  0   Success
+  1   General error
+  2   Invalid arguments
+  3   File not found
+  64  Configuration error
+
+Report bugs to: support@example.com
+EOF
+}
+```
+
+### Formatting Guidelines
+- Use 2 spaces for indentation in comments
+- Maximum line length: 80 characters
+- Break long comment lines appropriately
+- Align multi-line comments for readability
+- Use consistent comment block formatting
+
+## pdoc Documentation Rules
+- Use `pdoc` for API documentation generation from Python source
+- **Strictly use Google Style Docstrings** for all code elements
+- Document public variables using PEP 224 docstrings or `#:` doc-comments
+- Generated documentation located in `docs/sidekick/`
+- Target audience: developers and LLMs
+
+## Google Style Docstring Format
+```python
+def function_name(param1: str, param2: int) -> bool:
+    """Short description of function.
+
+    Longer description if needed.
+
+    Args:
+        param1: Description of param1
+        param2: Description of param2
+
+    Returns:
+        Description of return value
+
+    Raises:
+        ValueError: When something goes wrong
+    """
+```
+
+## Class Documentation
+```python
+class MyClass:
+    """Short description of class.
+
+    Longer description if needed.
+
+    Attributes:
+        attr1: Description of attr1
+        attr2: Description of attr2
+    """
+```
+
+## Module Documentation
+```python
+"""Module description.
+
+This module provides functionality for...
+
+Classes:
+    MyClass: Description of MyClass
+
+Functions:
+    my_function: Description of my_function
+"""
+```
+
+## Planning Documentation
+- Create planning documents in `docs/plans/<task_name>.md`
+- Use structured format with requirements, approach, files, testing sections
+- Include both successes and failures in implementation reports
+- Make plans reviewable and updatable throughout development

@@ -1,0 +1,48 @@
+---
+description: Code quality standards and best practices for Python development
+globs: **/*.py
+alwaysApply: false
+---
+
+# Code Quality Standards
+
+## General Principles
+- Follow SOLID principles for clean architecture
+- Use type hints for all public functions
+- Write comprehensive tests for new features
+- Use Google Style docstrings for documentation
+- Maintain high code quality with Ruff and mypy
+- Keep template generic and easily customizable
+- Provide clear examples of CLI patterns and best practices
+
+## Type Hints
+- Use type hints for all public functions and methods
+- Include return type annotations
+- Use Optional[] for nullable parameters
+- Use Union[] or | for multiple types (Python 3.10+)
+
+## Error Handling
+- Use specific exception types
+- Provide meaningful error messages
+- Log errors with appropriate context
+- Handle edge cases gracefully
+
+## Testing Requirements
+- Write unit tests for all new functionality
+- Aim for high test coverage
+- Use descriptive test names
+- Test both happy path and error scenarios
+- Use pytest fixtures for common setup
+
+## Code Organization
+- Keep functions focused and single-purpose
+- Use meaningful variable and function names
+- Group related functionality in modules
+- Follow consistent import organization
+- Use relative imports within the package
+
+## Performance Considerations
+- Profile code when performance is critical
+- Use appropriate data structures
+- Avoid unnecessary computations
+- Consider memory usage for large datasets
