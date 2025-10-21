@@ -280,7 +280,13 @@ class PluginFactoryConfig:
         
         if plugins_list_file.exists():
             self.logger.info(f"Using plugin list file: {plugins_list_file}")
-            self.logger.info(f"  Plugins: {plugins_list_file.read_text()}")
+            plugins_yaml = yaml.dump(
+                yaml.safe_load(plugins_list_file.read_text()), 
+                indent=2
+            )
+            # Indent the multi-line yaml string once (two spaces) for better readability
+            indented_plugins_yaml = "\n".join("  " + line if line.strip() != "" else line for line in plugins_yaml.splitlines())
+            self.logger.info(f"Plugins:\n{indented_plugins_yaml}")
         else:
             self.logger.warning(f"{plugins_list_file} not found, will auto-generate after repository is available")
         return source_config

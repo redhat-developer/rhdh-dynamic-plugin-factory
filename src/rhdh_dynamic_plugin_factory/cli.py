@@ -163,7 +163,6 @@ def main():
     if not config.auto_generate_plugins_list():
         logger.error("Failed to generate plugins list")
         sys.exit(1)
-    
     # Apply patches and overlays
     logger.info("[bold blue]Applying Patches and Overlays[/bold blue]")
     if not config.apply_patches_and_overlays():
