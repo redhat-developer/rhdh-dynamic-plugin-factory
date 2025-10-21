@@ -6,24 +6,19 @@ import sys
 import os
 import argparse
 from pathlib import Path
-from typing import Optional
-from dotenv import load_dotenv
 # Handle both direct script execution and module execution
 try:
     from .logger import setup_logging, get_logger
-    from .config import PluginFactoryConfig, SourceConfig, PluginListConfig
+    from .config import PluginFactoryConfig
     from .utils import run_command_with_streaming
 except ImportError:
     # For direct script execution, add parent directory to path
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from rhdh_dynamic_plugin_factory.logger import setup_logging, get_logger
-    from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig, SourceConfig, PluginListConfig
+    from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
     from rhdh_dynamic_plugin_factory.utils import run_command_with_streaming
 
-from dotenv import load_dotenv
-
 logger = get_logger("cli")
-
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser for the CLI."""
@@ -89,7 +84,7 @@ Examples:
     return parser
 
 
-def install_dependencies(yarn_version: str, workspace_path: Path) -> bool:
+def install_dependencies(workspace_path: Path) -> bool:
     """Install dependencies in the workspace using yarn install with corepack."""
     logger.info("[bold blue]Installing workspace dependencies[/bold blue]")
 
@@ -186,7 +181,7 @@ def main():
     logger.info("[bold blue]Installing Dependencies[/bold blue]")
     
     workspace_path = repo_path.joinpath(config.workspace_path).absolute()
-    if not install_dependencies(config.yarn_version, workspace_path):
+    if not install_dependencies(workspace_path):
         logger.error("Failed to install dependencies")
         sys.exit(1)
     

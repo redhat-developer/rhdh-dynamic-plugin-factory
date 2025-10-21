@@ -6,7 +6,7 @@ import argparse
 import os
 from pathlib import Path
 import sys
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 import yaml
@@ -20,7 +20,6 @@ class PluginFactoryConfig:
     
     # Required fields loaded from default.env file (can be overridden by environment variables)
     node_version: str = field(default="")
-    yarn_version: str = field(default="") 
     rhdh_cli_version: str = field(default="")
     
     # Directories
@@ -83,7 +82,6 @@ class PluginFactoryConfig:
         
         # Load version defaults from environment (set by default.env)
         config.node_version = os.getenv("NODE_VERSION")
-        config.yarn_version = os.getenv("YARN_VERSION")
         config.rhdh_cli_version = os.getenv("RHDH_CLI_VERSION")
 
         # Load registry configuration from environment variables
@@ -106,8 +104,6 @@ class PluginFactoryConfig:
         # Validate required version fields
         if not config.node_version:
             raise ValueError("NODE_VERSION must be set (usually loaded from default.env)")
-        if not config.yarn_version:
-            raise ValueError("YARN_VERSION must be set (usually loaded from default.env)")
         if not config.rhdh_cli_version:
             raise ValueError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
         
@@ -404,7 +400,7 @@ class PluginFactoryConfig:
 class SourceConfig:
     """Configuration for plugin source repository."""
     repo: str
-    repo_backstage_version: str
+    repo_backstage_version: Optional[str] = None
     repo_ref: Optional[str] = None
     repo_flat: bool = False    
     
@@ -419,7 +415,7 @@ class SourceConfig:
         
         except Exception as e:
             raise ValueError(f"Failed to load source configuration from {source_file}: {e}")
-
+        
         config = cls(
             repo=data["repo"],
             repo_ref=data.get("repo-ref"),
@@ -428,8 +424,8 @@ class SourceConfig:
         )
 
         # Validate all fields are set
-        if not config.repo or not config.repo_backstage_version or not config.repo_ref:
-            raise ValueError("repo, repo_backstage_version, and repo_ref are required")
+        if not config.repo or not config.repo_ref:
+            raise ValueError("repo, and repo_ref are required")
         return config
     
     def get_repo_owner_and_name(self) -> str:
