@@ -143,27 +143,25 @@ def main():
         sys.exit(1)
     
     # Phase 1: Setup configuration directory
-    config.setup_config_directory()
+    source_config = config.setup_config_directory()
     
     # Phase 2: Determine source configuration
     logger.info("[bold blue]Source Configuration[/bold blue]")
-    source_config = config.discover_source_config()
-    repo_path = config.repo_path
 
     # Phase 3: Clone repository if needed
     if source_config and not config.use_local:
         logger.info("[bold blue]Repository Setup[/bold blue]")
-        if not source_config.clone_to_path(args.repo_path):
+        if not source_config.clone_to_path(config.repo_path):
             logger.error("Failed to clone repository")
             sys.exit(1)
     elif config.use_local or not source_config:
         # Use local repository (either --use-local flag or no source_config)
         logger.info("[bold blue]Using local repository[/bold blue]")
-        if not repo_path.exists():
-            logger.error(f"Local repository does not exist at: {repo_path}")
+        if not config.repo_path.exists():
+            logger.error(f"Local repository does not exist at: {config.repo_path}")
             logger.error("Either provide source.json to clone the repository, or ensure workspace exists at directory specified by --repo-path")
             sys.exit(1)
-        logger.info(f"Using local repository at: {repo_path}")
+        logger.info(f"Using local repository at: {config.repo_path}")
     
     # Auto-generate plugins-list.yaml if needed (after repository is available)
     if not config.auto_generate_plugins_list():

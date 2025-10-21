@@ -175,7 +175,7 @@ class PluginFactoryConfig:
                 )
             else:
                 self.logger.warning(
-                    f"source.json not found at {source_file}. Using local repository content at {self.repo_path}"
+                    f"source.json not found at {source_file}. Attempting to use local repository content at {self.repo_path}"
                 )
     
     def _validate_plugins_list(self) -> None:
@@ -233,22 +233,24 @@ class PluginFactoryConfig:
         """Discovers and loads source configuration from config_dir/source.json."""
         source_file = self.config_dir / "source.json"
 
-        if source_file.exists():
+        if source_file.exists() and not self.use_local:
             try:
-
                 source_config = SourceConfig.from_file(source_file)
                 self.logger.info(f"Using source config from: {source_config}")
                 return source_config
             except Exception as e:
-                self.logger.error(f"[yellow]Warning: Failed to load {source_file}: {e}[/yellow]")
-                if self.repo_path and self.repo_path.exists():
-                    self.logger.info("Attempting to use locally stored plugin source code")
-                else:
-                    self.logger.error(f"[red]Failed to load {source_file} and locally stored plugin source code doesn't exist: {e}[/red]")
-                    sys.exit(1)
-        return None
+                self.logger.error(f"[red]Failed to load {source_file}: {e}[/red]")
+                sys.exit(1)
+        elif self.repo_path and self.repo_path.exists():
+            self.logger.info("Source configuration not found, will attempt to use locally stored plugin source code")
+        else:
+            self.logger.error(
+                f"[red]No valid source configuration found and {self.repo_path} is empty or does not exist[/red]"
+                f"Either provide a valid {source_file} or ensure locally stored plugin source code exists at {self.repo_path}"
+            )
+            sys.exit(1)
     
-    def setup_config_directory(self) -> None:
+    def setup_config_directory(self) -> "SourceConfig":
         """Setup and validate configuration directory structure."""
         self.logger.info("[bold blue]Setting up configuration directory[/bold blue]")
         
@@ -274,6 +276,7 @@ class PluginFactoryConfig:
             self.logger.debug(f"Using plugin list file: {plugins_list_file}")
         else:
             self.logger.debug(f"plugins-list.yaml not found, will auto-generate after repository is available")
+        return source_config
     
     def apply_patches_and_overlays(self) -> bool:
         """Apply patches and overlays using override-sources.sh script."""
@@ -396,32 +399,39 @@ class PluginFactoryConfig:
 class SourceConfig:
     """Configuration for plugin source repository."""
     repo: str
-    repo_backstage_version: Optional[str] = None
-    repo_ref: Optional[str] = None
-    repo_flat: bool = False    
+    repo_ref: str
     
     logger = get_logger("source_config")
 
     @classmethod
     def from_file(cls, source_file: Path) -> "SourceConfig":
         """Load source configuration from JSON file."""
+        # Load and parse JSON file
         try:
             with open(source_file, 'r') as f:
                 data = json.load(f)
-        
+        except FileNotFoundError:
+            raise ValueError(f"Source configuration file not found: {source_file}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in {source_file}: {e}")
         except Exception as e:
-            raise ValueError(f"Failed to load source configuration from {source_file}: {e}")
+            raise ValueError(f"Failed to read {source_file}: {e}")
 
+        # Extract and validate required fields
+        try:
+            repo = data["repo"]
+            repo_ref = data.get("repo-ref")
+        except KeyError as e:
+            raise ValueError(f"Missing required field {e} in {source_file}")
+        
+        # Create config instance
         config = cls(
-            repo=data["repo"],
-            repo_ref=data.get("repo-ref"),
-            repo_flat=data.get("repo-flat", False),
-            repo_backstage_version=data.get("repo-backstage-version")
+            repo=repo,
+            repo_ref=repo_ref,
         )
 
-        # Validate all fields are set
-        if not config.repo or not config.repo_ref:
-            raise ValueError("repo, and repo_ref are required")
+        # Validate all required fields are set
+
         return config
     
     def get_repo_owner_and_name(self) -> str:
