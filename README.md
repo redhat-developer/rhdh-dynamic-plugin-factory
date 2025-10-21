@@ -483,13 +483,16 @@ podman run --rm -it \
 ```bash
 rhdh-dynamic-plugin-factory/
 ├── src/rhdh_dynamic_plugin_factory/
+|   ├── __init__.py         
 │   ├── __main__.py              # Package entry point
 │   ├── cli.py                   # CLI implementation
 │   ├── config.py                # Configuration classes
-│   └── logger.py                # Logging setup
+│   ├── logger.py                # Logging setup
+|   └── utils.py                 # Utility functions
 ├── scripts/
 │   ├── export-workspace.sh      # Plugin export script
 │   └── override-sources.sh      # Patch/overlay script
+├── tests/                       # Unit Tests
 ├── examples/                    # Example configuration sets
 ├── default.env                  # Default environment settings
 ├── requirements.txt             # Python dependencies
