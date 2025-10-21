@@ -19,7 +19,6 @@ class PluginFactoryConfig:
     """Main configuration for the plugin factory."""
     
     # Required fields loaded from default.env file (can be overridden by environment variables)
-    node_version: str = field(default="")
     rhdh_cli_version: str = field(default="")
     
     # Directories
@@ -81,7 +80,6 @@ class PluginFactoryConfig:
         config.repo_path = Path(args.repo_path)
         
         # Load version defaults from environment (set by default.env)
-        config.node_version = os.getenv("NODE_VERSION")
         config.rhdh_cli_version = os.getenv("RHDH_CLI_VERSION")
 
         # Load registry configuration from environment variables
@@ -102,8 +100,6 @@ class PluginFactoryConfig:
             dir_path.mkdir(parents=True, exist_ok=True)
         
         # Validate required version fields
-        if not config.node_version:
-            raise ValueError("NODE_VERSION must be set (usually loaded from default.env)")
         if not config.rhdh_cli_version:
             raise ValueError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
         
@@ -415,7 +411,7 @@ class SourceConfig:
         
         except Exception as e:
             raise ValueError(f"Failed to load source configuration from {source_file}: {e}")
-        
+
         config = cls(
             repo=data["repo"],
             repo_ref=data.get("repo-ref"),

@@ -113,12 +113,10 @@ The factory expects the following directory structure:
 
 #### 1. `default.env` (Provided)
 
-This file contains required version settings and defaults for Node, Yarn and the RHDH CLI:
+This file contains required version settings and defaults for RHDH CLI:
 
 ```bash
-# Node.js and tooling versions
-NODE_VERSION="22"
-YARN_VERSION="3.8.7"
+# Tooling versions
 RHDH_CLI_VERSION="1.7.2"
 ```
 
@@ -130,8 +128,6 @@ Defines the source repository to clone:
 {
   "repo": "https://github.com/backstage/community-plugins",
   "repo-ref": "main",
-  "repo-backstage-version": "1.39.1",
-  "repo-flat": false
 }
 ```
 
@@ -139,8 +135,6 @@ Defines the source repository to clone:
 
 - `repo`: Repository URL (HTTPS or SSH)
 - `repo-ref`: Git reference (branch, tag, or commit SHA)
-- `repo-backstage-version`: Backstage version used by the source repository
-- `repo-flat`: Whether the repository has a flat structure (default: `false`)
 
 #### 3. `config/plugins-list.yaml` (Required)
 
