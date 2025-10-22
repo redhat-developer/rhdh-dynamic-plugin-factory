@@ -6,6 +6,7 @@ This package provides configuration management, plugin list handling, and
 automated build orchestration for Backstage plugins.
 """
 
+from .__version__ import __version__
 from .cli import main, create_parser
 from .config import (
     PluginFactoryConfig,
@@ -21,8 +22,6 @@ from .utils import (
     run_command_with_streaming,
     display_export_results,
 )
-
-__version__ = "0.1.0"
 
 __all__ = [
     # CLI

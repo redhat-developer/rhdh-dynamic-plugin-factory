@@ -6,14 +6,17 @@ import sys
 import os
 import argparse
 from pathlib import Path
+
 # Handle both direct script execution and module execution
 try:
+    from .__version__ import __version__
     from .logger import setup_logging, get_logger
     from .config import PluginFactoryConfig
     from .utils import run_command_with_streaming
 except ImportError:
     # For direct script execution, add parent directory to path
     sys.path.insert(0, str(Path(__file__).parent.parent))
+    from rhdh_dynamic_plugin_factory.__version__ import __version__
     from rhdh_dynamic_plugin_factory.logger import setup_logging, get_logger
     from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
     from rhdh_dynamic_plugin_factory.utils import run_command_with_streaming
@@ -31,6 +34,13 @@ Examples:
         # This assumes that ./config is populated with the required source.json and plugins-list.yaml files
         python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./workspace --workspace-path workspaces/todo --log-level DEBUG --output-dir ./outputs
         """
+    )
+    
+    # Version flag
+    parser.add_argument(
+        "-v", "--version",
+        action="version",
+        version=__version__
     )
     
     # Global options
