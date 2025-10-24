@@ -385,6 +385,8 @@ When `--push-images` is enabled, images are tagged as:
 ${REGISTRY_URL}/${REGISTRY_NAMESPACE}/plugin-name-dynamic:1.0.0
 ```
 
+NOTE: If the repository name (ex: plugin-name-dynamic) in the namespace specified by `REGISTRY_NAMESPACE` does not exist, the dynamic plugin factory will create a new registry. Depending on the registry specified by `REGISTRY_URL`, the newly created repository may be private. This will be the case for `quay.io`.
+
 ## Examples
 
 See the `examples` directory for complete configuration examples:
@@ -419,6 +421,50 @@ podman run --rm -it \
   --workspace-path workspaces/todo \
   --no-push-images
 ```
+
+#### Package Verification
+
+Afterwards, you can verify that the plugin functions correctly by dynamically installing them into your RHDH instance by adding the newly published plugins into the `dynamic-plugins.yaml` file of your RHDH instance. You may need to add additional `pluginConfig` fields if your plugin requires additional configurations.
+
+```yaml
+includes:
+  - dynamic-plugins.default.yaml
+plugins:
+  - package: oci://quay.io/{REGISTRY_NAMESPACE}/backstage-community-plugin-todo:0.12.0!backstage-community-plugin-todo
+    disabled: false
+    pluginConfig: # `pluginConfig` may be required for additional configurations such as mounting the components
+      dynamicPlugins:
+        frontend:
+          backstage-community.plugin-todo:
+            mountPoints:
+              - mountPoint: entity.page.todo/cards
+                importName: EntityTodoContent
+            entityTabs:
+              - path: /todo
+                title: Todo
+                mountPoint: entity.page.todo
+  - package: oci://quay.io/{REGISTRY_NAMESPACE}/backstage-community-plugin-todo-backend:0.13.0!backstage-community-plugin-todo-backend 
+    disabled: false
+```
+
+We will show an example of how to verify with [RHDH Local](https://github.com/redhat-developer/rhdh-local).
+
+1. If the OCI images were pushed to a previously non-existent repository, please ensure it's now a public repository (or you can setup podman credentials for subsequent steps)
+2. Create a `dynamic-plugins.override.yaml` file with the plugin config above. Replace the `{REGISTRY_NAMESPACE}` with the registry namespace used to publish the plugins.
+3. Import a catalog entity the `todo` plugin with. We will be importing the backstage repository via `config/app-config/app-config.local.yaml`:
+  
+    ```yaml
+    catalog:
+      locations:
+        - type: url
+          target: https://github.com/backstage/backstage/blob/master/catalog-info.yaml
+          rules: 
+            - allow: [Component]
+    ```
+
+4. Start the RHDH instance with `podman compose up -d`
+5. Navigate to <http://localhost:7007/catalog/default/component/backstage/todo> and verify that the `backstage` catalog entity appears, and a `todo` tab appears containing a table of all `TODO` comments in the source code of the catalog entity.
+6. Clean up with `podman compose down --volumes`
 
 ### Gitlab Workspace Example
 
