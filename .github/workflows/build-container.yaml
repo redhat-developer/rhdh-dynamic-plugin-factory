@@ -1,0 +1,158 @@
+# Build and publish the container image for the RHDH Dynamic Plugin Factory. 
+# Tags are generated assuming that release versions are monotonic.
+name: Build and Publish Container
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  
+
+env:
+  REGISTRY: quay.io
+  REGISTRY_IMAGE: rhdh-community/dynamic-plugins-factory
+jobs:
+  build:
+    env:
+      HAS_QUAY_AUTH: ${{ secrets.QUAY_USERNAME != '' && secrets.QUAY_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # 4.3.0
+        with:
+          fetch-depth: 0
+
+      - name: Prepare Tags
+        id: prepare
+        run: |
+          set -e
+          echo "::group::Extract Version from __version__.py"
+          # Extract version from __version__.py
+          VERSION=$(grep -oP '__version__ = "\K[^"]+' src/rhdh_dynamic_plugin_factory/__version__.py)
+          echo "Version extracted: $FULL_VERSION"
+          
+          # Strip patch version (e.g., 1.8.0 -> 1.8)
+          VERSION=$(echo "$VERSION" | cut -d. -f1,2)
+          echo "Stripped version: $VERSION"
+          echo "::endgroup::"
+          
+          echo "::group::Get commit SHA"
+          # Get short SHA
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "Short SHA: $SHORT_SHA"
+          echo "::endgroup::"
+          
+          echo "::group::Query Quay API for latest tag"
+          # Query Quay API for the latest tag
+          QUAY_API_URL="https://quay.io/api/v1/repository/${{ env.REGISTRY_IMAGE }}/tag/latest"
+          echo "Querying: $QUAY_API_URL"
+          
+          LATEST_TAG_RESPONSE=$(curl -s "$QUAY_API_URL" || echo '{}')
+          echo "API Response: $LATEST_TAG_RESPONSE"
+          
+          # Extract the latest tag name (should be in format like "1.8-5")
+          LATEST_TAG=$(echo "$LATEST_TAG_RESPONSE" | jq -r '.name // "none"')
+          echo "Latest tag: $LATEST_TAG"
+          echo "::endgroup::"
+          
+          # Tags are generated assuming that release versions are monotonic.
+          # This means latest tag is the highest release number for a given version.
+          echo "::group::Calculate new version and release number"
+          # Parse the latest tag to get version and release
+          if [[ "$LATEST_TAG" =~ ^([0-9]+\.[0-9]+)-([0-9]+)$ ]]; then
+            LATEST_VERSION="${BASH_REMATCH[1]}"
+            LATEST_RELEASE="${BASH_REMATCH[2]}"
+            echo "Latest version: $LATEST_VERSION"
+            echo "Latest release: $LATEST_RELEASE"
+            
+            # If versions match, increment release; otherwise start at 0
+            if [ "$LATEST_VERSION" == "$VERSION" ]; then
+              RELEASE=$((LATEST_RELEASE + 1))
+              echo "Version matches, incrementing release to: $RELEASE"
+            else
+              RELEASE=0
+              echo "Version changed from $LATEST_VERSION to $VERSION, starting at release: $RELEASE"
+            fi
+          else
+            RELEASE=0
+            echo "No valid latest tag found, starting at release: $RELEASE"
+          fi
+          echo "::endgroup::"
+          
+          echo "::group::Generate tags"
+          VERSION_RELEASE_TAG="${VERSION}-${RELEASE}"
+          echo "Generated tags:"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${VERSION_RELEASE_TAG}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${VERSION}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${SHORT_SHA}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:latest"
+          echo "::endgroup::"
+          
+          # Set outputs
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "release=${RELEASE}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "version_release_tag=${VERSION_RELEASE_TAG}" >> $GITHUB_OUTPUT
+          
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        
+      - name: Login to Quay
+        if: env.HAS_QUAY_AUTH == 'true'
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Build and Push Container Image
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version_release_tag }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.short_sha }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Display Build Summary
+        run: |
+          echo "## Container Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Image Tags Generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag Type | Tag Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version-Release | \`${{ steps.prepare.outputs.version_release_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.prepare.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | \`${{ steps.prepare.outputs.short_sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Latest | \`latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Full Image References" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version_release_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.short_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}" >> $GITHUB_STEP_SUMMARY
