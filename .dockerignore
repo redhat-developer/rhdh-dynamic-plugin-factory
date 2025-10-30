@@ -3,6 +3,7 @@ outputs/
 workspace/
 .vscode/
 .git/
+.github/
 .gitignore
 .venv/
 .cursor/

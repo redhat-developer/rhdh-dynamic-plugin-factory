@@ -1,0 +1,166 @@
+name: 'Should Skip Build'
+description: 'Check if container build should be skipped based on existing images and file changes'
+inputs:
+  registry:
+    description: 'Container registry URL (e.g., quay.io)'
+    required: true
+  image:
+    description: 'Full image name including namespace (e.g., my-org/my-image)'
+    required: true
+  commit-sha:
+    description: 'Git commit SHA to check'
+    required: true
+outputs:
+  should_skip:
+    description: 'Whether the build should be skipped (true/false)'
+    value: ${{ steps.check.outputs.should_skip }}
+  skip_reason:
+    description: 'Human-readable reason for skipping'
+    value: ${{ steps.check.outputs.skip_reason }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Install skopeo
+      shell: bash
+      run: |
+        if ! command -v skopeo &> /dev/null; then
+          echo "Installing skopeo"
+          sudo apt-get update -q
+          sudo apt-get install -y -q skopeo
+        else
+          echo "skopeo already installed"
+        fi
+
+    - name: Check if build should be skipped
+      id: check
+      shell: bash
+      run: |
+        set +e  # Don't exit on error, we handle them explicitly
+        
+        SHOULD_SKIP="false"
+        SKIP_REASON=""
+        
+        echo "::group::Check if image exists with commit SHA"
+        SHORT_SHA=$(echo "${{ inputs.commit-sha }}" | cut -c1-7)
+        REPOSITORY="docker://${{ inputs.registry }}/${{ inputs.image }}"
+        IMAGE_TAG="${REPOSITORY}:${SHORT_SHA}"
+        
+        echo "Checking for image: ${IMAGE_TAG}"
+        
+        # Try to inspect the image - if it exists, skopeo returns 0
+
+        skopeo inspect "${IMAGE_TAG}" &>/dev/null
+ 
+        IMAGE_EXISTS=$?
+        
+        if [ $IMAGE_EXISTS -eq 0 ]; then
+          SHOULD_SKIP="true"
+          SKIP_REASON="Image with commit SHA ${SHORT_SHA} already exists in registry"
+          echo "✓ Image exists - build will be skipped"
+          echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+          echo "skip_reason=${SKIP_REASON}" >> $GITHUB_OUTPUT
+          echo "::endgroup::"
+          exit 0
+        else
+          echo "✗ Image does not exist - continuing checks"
+        fi
+        echo "::endgroup::"
+        
+        echo "::group::Check if only documentation/ignored files changed"
+        
+        # Get the list of changed files based on event type
+        CHANGED_FILES=""
+        
+        case "${{ github.event_name }}" in
+          workflow_dispatch)
+            echo "Workflow triggered manually - skipping file change check"
+            echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+            echo "skip_reason=Manual trigger" >> $GITHUB_OUTPUT
+            echo "::endgroup::"
+            exit 0
+            ;;
+            
+          pull_request|pull_request_target)
+            echo "Pull request event detected"
+            if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+              # Find the merge base between PR base and HEAD
+              BASE_COMMIT=$(git merge-base ${{ github.event.pull_request.base.sha }} HEAD)
+              echo "Base commit (merge-base): $BASE_COMMIT"
+              CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD)
+
+            else
+              echo "Warning: No PR base SHA available, skipping file check"
+              echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+              echo "skip_reason=No base commit available for PR" >> $GITHUB_OUTPUT
+              echo "::endgroup::"
+              exit 0
+            fi
+            ;;
+            
+          push)
+            echo "Push event detected"
+            if [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+              echo "Comparing with previous commit: ${{ github.event.before }}"
+              CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+            else
+              echo "First push or no previous commit available"
+              # Get all files in the current commit
+              CHANGED_FILES=$(git diff-tree --name-only -r ${{ github.sha }})
+            fi
+            ;;
+            
+          *)
+            echo "Unsupported event type: ${{ github.event_name }}"
+            echo "Proceeding with build as a safety measure"
+            echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+            echo "skip_reason=Unsupported event type" >> $GITHUB_OUTPUT
+            echo "::endgroup::"
+            exit 0
+            ;;
+        esac
+        
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No files changed - build will be skipped"
+          SHOULD_SKIP="true"
+          SKIP_REASON="No files changed"
+          echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+          echo "skip_reason=${SKIP_REASON}" >> $GITHUB_OUTPUT
+          echo "::endgroup::"
+          exit 0
+        fi
+        
+        echo "Changed files:"
+        echo "$CHANGED_FILES"
+        echo ""
+        
+        # Check if all changed files are markdown files
+        ALL_FILES_ARE_DOCS="true"
+        NON_DOC_FILES=()
+        
+        while IFS= read -r file; do
+          if [ -z "$file" ]; then
+            continue
+          fi
+          
+          # Check if file ends with .md
+          if [[ ! "$file" =~ \.md$ ]]; then
+            ALL_FILES_ARE_DOCS="false"
+            NON_DOC_FILES+=("$file")
+          fi
+        done <<< "$CHANGED_FILES"
+        
+        if [ "$ALL_FILES_ARE_DOCS" = "true" ]; then
+          SHOULD_SKIP="true"
+          SKIP_REASON="All changed files are markdown documentation"
+          echo "✓ All changed files are markdown documentation - build will be skipped"
+        else
+          echo "✗ Found ${#NON_DOC_FILES[@]} non-documentation file change(s):"
+          printf '  - %s\n' "${NON_DOC_FILES[@]}"
+          echo "Build will proceed"
+        fi
+        
+        echo "::endgroup::"
+        
+        echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+        echo "skip_reason=${SKIP_REASON}" >> $GITHUB_OUTPUT
+

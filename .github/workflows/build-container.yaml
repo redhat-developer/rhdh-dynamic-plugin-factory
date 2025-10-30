@@ -2,6 +2,11 @@
 name: Build and Publish Container
 on:
   workflow_dispatch:
+    inputs:
+      push-images:
+        description: 'Push images to registry'
+        required: false
+        default: 'true'
   push:
     branches:
       - main
@@ -29,20 +34,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check if build should be skipped
+        id: skip_check
+        uses: ./.github/actions/should-skip-build
+        with:
+          registry: ${{ env.REGISTRY }}
+          image: ${{ env.REGISTRY_IMAGE }}
+          commit-sha: ${{ github.sha }}
       - name: Install skopeo
+        if: steps.skip_check.outputs.should_skip != 'true'
         run: |
           echo "Installing skopeo"
           sudo apt-get update -q
           sudo apt-get install -y -q skopeo
 
       - name: Set up QEMU
+        if: steps.skip_check.outputs.should_skip != 'true'
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
           
       - name: Set up Docker Buildx
+        if: steps.skip_check.outputs.should_skip != 'true'
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         
       - name: Login to Quay
-        if: env.HAS_QUAY_AUTH == 'true'
+        if: steps.skip_check.outputs.should_skip != 'true' && env.HAS_QUAY_AUTH == 'true'
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -50,6 +65,7 @@ jobs:
           password: ${{ secrets.QUAY_TOKEN }}
 
       - name: Prepare Tags
+        if: steps.skip_check.outputs.should_skip != 'true'
         id: prepare
         run: |
           set -e
@@ -121,11 +137,12 @@ jobs:
           echo "version_release_tag=${VERSION_RELEASE_TAG}" >> $GITHUB_OUTPUT
           
       - name: Build and Push Container Image
+        if: steps.skip_check.outputs.should_skip != 'true'
         uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ inputs.push-images == 'true'}}
           tags: |
             ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version_release_tag }}
             ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version }}
@@ -135,6 +152,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Display Build Summary
+        if: steps.skip_check.outputs.should_skip != 'true'
         run: |
           echo "## Container Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -160,3 +178,20 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository**: ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build Skipped Summary
+        if: steps.skip_check.outputs.should_skip == 'true'
+        run: |
+          echo "## Container Build Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Reason" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.skip_check.outputs.skip_reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Short SHA**: \`$(echo ${{ github.sha }} | cut -c1-7)\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No build or push operations were performed." >> $GITHUB_STEP_SUMMARY
