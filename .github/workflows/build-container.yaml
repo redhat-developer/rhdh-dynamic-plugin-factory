@@ -1,5 +1,4 @@
 # Build and publish the container image for the RHDH Dynamic Plugin Factory. 
-# Tags are generated assuming that release versions are monotonic.
 name: Build and Publish Container
 on:
   workflow_dispatch:
@@ -29,6 +28,13 @@ jobs:
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # 4.3.0
         with:
           fetch-depth: 0
+
+      - name: Install skopeo
+        run: |
+          echo "Installing skopeo"
+          sudo apt-get update -q
+          sudo apt-get install -y -q skopeo
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
           
@@ -63,45 +69,44 @@ jobs:
           echo "Short SHA: $SHORT_SHA"
           echo "::endgroup::"
           
-          echo "::group::Query Quay API for latest tag"
-          # Query Quay API for the latest tag
-          QUAY_API_URL="https://quay.io/api/v1/repository/${{ env.REGISTRY_IMAGE }}/tag/latest"
-          echo "Querying: $QUAY_API_URL"
+          echo "::group::Query existing tags using skopeo"
+          REPOSITORY="docker://${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}"
+          echo "Querying repository: $REPOSITORY"
           
-          LATEST_TAG_RESPONSE=$(curl -s "$QUAY_API_URL" || echo '{}')
-          echo "API Response: $LATEST_TAG_RESPONSE"
+          # Grab all tags that contain the current version (e.g. 1.8)
+          EXCLUDES="latest|sha256-"
+          # since now using extended grep, add \ before the . so it only matches ., not anything
+          BASETAG="${VERSION//\./\\.}"
+          LATEST_TAG="$(skopeo list-tags ${REPOSITORY} 2>/dev/null | jq -r .Tags[] | grep -E -v "${EXCLUDES}" | grep -E "${BASETAG}" | sort -V)"
           
-          # Extract the latest tag name (should be in format like "1.8-5")
-          LATEST_TAG=$(echo "$LATEST_TAG_RESPONSE" | jq -r '.name // "none"')
-          echo "Latest tag: $LATEST_TAG"
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No tags found for version $VERSION, starting at release 0"
+            LATEST_TAG="none"
+          else
+            LATEST_TAG=$(echo "$LATEST_TAG" | tail -1)
+            echo "Latest tag: $LATEST_TAG"
+          fi
           echo "::endgroup::"
           
-          # Tags are generated assuming that release versions are monotonic.
-          # This means latest tag is the highest release number for a given version.
           echo "::group::Calculate new version and release number"
           # Parse the latest tag to get version and release
           if [[ "$LATEST_TAG" =~ ^([0-9]+\.[0-9]+)-([0-9]+)$ ]]; then
             LATEST_VERSION="${BASH_REMATCH[1]}"
             LATEST_RELEASE="${BASH_REMATCH[2]}"
-            echo "Latest version: $LATEST_VERSION"
-            echo "Latest release: $LATEST_RELEASE"
+            echo "Latest version found: $LATEST_VERSION"
+            echo "Latest release found: $LATEST_RELEASE"
             
-            # If versions match, increment release; otherwise start at 0
-            if [ "$LATEST_VERSION" == "$VERSION" ]; then
-              RELEASE=$((LATEST_RELEASE + 1))
-              echo "Version matches, incrementing release to: $RELEASE"
-            else
-              RELEASE=0
-              echo "Version changed from $LATEST_VERSION to $VERSION, starting at release: $RELEASE"
-            fi
+            NEW_RELEASE=$((LATEST_RELEASE + 1))
+            echo "Incrementing release to: $NEW_RELEASE"
+
           else
-            RELEASE=0
+            NEW_RELEASE=0
             echo "No valid latest tag found, starting at release: $RELEASE"
           fi
           echo "::endgroup::"
           
           echo "::group::Generate tags"
-          VERSION_RELEASE_TAG="${VERSION}-${RELEASE}"
+          VERSION_RELEASE_TAG="${VERSION}-${NEW_RELEASE}"
           echo "Generated tags:"
           echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${VERSION_RELEASE_TAG}"
           echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${VERSION}"
@@ -111,7 +116,7 @@ jobs:
           
           # Set outputs
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "release=${RELEASE}" >> $GITHUB_OUTPUT
+          echo "release=${NEW_RELEASE}" >> $GITHUB_OUTPUT
           echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "version_release_tag=${VERSION_RELEASE_TAG}" >> $GITHUB_OUTPUT
           
