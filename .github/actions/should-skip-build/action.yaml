@@ -3,13 +3,21 @@ description: 'Check if container build should be skipped based on existing image
 inputs:
   registry:
     description: 'Container registry URL (e.g., quay.io)'
-    required: true
+    required: false
   image:
     description: 'Full image name including namespace (e.g., my-org/my-image)'
-    required: true
+    required: false
   commit-sha:
     description: 'Git commit SHA to check'
     required: true
+  check-image:
+    description: 'Whether to check for existing container images (true/false)'
+    required: false
+    default: 'true'
+  file-patterns:
+    description: 'File extensions to check for skip logic (space or comma-separated, e.g., ".md")'
+    required: false
+    default: '.md'
 outputs:
   should_skip:
     description: 'Whether the build should be skipped (true/false)'
@@ -21,6 +29,7 @@ runs:
   using: 'composite'
   steps:
     - name: Install skopeo
+      if: inputs.check-image == 'true'
       shell: bash
       run: |
         if ! command -v skopeo &> /dev/null; then
@@ -40,31 +49,34 @@ runs:
         SHOULD_SKIP="false"
         SKIP_REASON=""
         
-        echo "::group::Check if image exists with commit SHA"
-        SHORT_SHA=$(echo "${{ inputs.commit-sha }}" | cut -c1-7)
-        REPOSITORY="docker://${{ inputs.registry }}/${{ inputs.image }}"
-        IMAGE_TAG="${REPOSITORY}:${SHORT_SHA}"
-        
-        echo "Checking for image: ${IMAGE_TAG}"
-        
-        # Try to inspect the image - if it exists, skopeo returns 0
-
-        skopeo inspect "${IMAGE_TAG}" &>/dev/null
- 
-        IMAGE_EXISTS=$?
-        
-        if [ $IMAGE_EXISTS -eq 0 ]; then
-          SHOULD_SKIP="true"
-          SKIP_REASON="Image with commit SHA ${SHORT_SHA} already exists in registry"
-          echo "✓ Image exists - build will be skipped"
-          echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
-          echo "skip_reason=${SKIP_REASON}" >> $GITHUB_OUTPUT
+        # Check if image exists (if enabled)
+        if [ "${{ inputs.check-image }}" = "true" ]; then
+          echo "::group::Check if image exists with commit SHA"
+          SHORT_SHA=$(echo "${{ inputs.commit-sha }}" | cut -c1-7)
+          REPOSITORY="docker://${{ inputs.registry }}/${{ inputs.image }}"
+          IMAGE_TAG="${REPOSITORY}:${SHORT_SHA}"
+          
+          echo "Checking for image: ${IMAGE_TAG}"
+          
+          # Try to inspect the image - if it exists, skopeo returns 0
+          skopeo inspect "${IMAGE_TAG}" &>/dev/null
+          IMAGE_EXISTS=$?
+          
+          if [ $IMAGE_EXISTS -eq 0 ]; then
+            SHOULD_SKIP="true"
+            SKIP_REASON="Image with commit SHA ${SHORT_SHA} already exists in registry"
+            echo "✓ Image exists - build will be skipped"
+            echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+            echo "skip_reason=${SKIP_REASON}" >> $GITHUB_OUTPUT
+            echo "::endgroup::"
+            exit 0
+          else
+            echo "✗ Image does not exist - continuing checks"
+          fi
           echo "::endgroup::"
-          exit 0
         else
-          echo "✗ Image does not exist - continuing checks"
+          echo "Image checking disabled - skipping image existence check"
         fi
-        echo "::endgroup::"
         
         echo "::group::Check if only documentation/ignored files changed"
         
@@ -133,29 +145,44 @@ runs:
         echo "$CHANGED_FILES"
         echo ""
         
-        # Check if all changed files are markdown files
-        ALL_FILES_ARE_DOCS="true"
-        NON_DOC_FILES=()
+        # Parse file patterns (handle both space and comma-separated)
+        FILE_PATTERNS="${{ inputs.file-patterns }}"
+        FILE_PATTERNS=$(echo "$FILE_PATTERNS" | tr ',' ' ')
+        
+        echo "Checking for file patterns: $FILE_PATTERNS"
+        echo ""
+        
+        # Check if all changed files match the ignore patterns
+        ALL_FILES_MATCH_PATTERN="true"
+        NON_MATCHING_FILES=()
         
         while IFS= read -r file; do
           if [ -z "$file" ]; then
             continue
           fi
           
-          # Check if file ends with .md
-          if [[ ! "$file" =~ \.md$ ]]; then
-            ALL_FILES_ARE_DOCS="false"
-            NON_DOC_FILES+=("$file")
+          # Check if file matches any of the patterns
+          FILE_MATCHES="false"
+          for pattern in $FILE_PATTERNS; do
+            if [[ "$file" =~ ${pattern}$ ]]; then
+              FILE_MATCHES="true"
+              break
+            fi
+          done
+          
+          if [ "$FILE_MATCHES" = "false" ]; then
+            ALL_FILES_MATCH_PATTERN="false"
+            NON_MATCHING_FILES+=("$file")
           fi
         done <<< "$CHANGED_FILES"
         
-        if [ "$ALL_FILES_ARE_DOCS" = "true" ]; then
+        if [ "$ALL_FILES_MATCH_PATTERN" = "true" ]; then
           SHOULD_SKIP="true"
-          SKIP_REASON="All changed files are markdown documentation"
-          echo "✓ All changed files are markdown documentation - build will be skipped"
+          SKIP_REASON="All changed files match skip patterns: $FILE_PATTERNS"
+          echo "✓ All changed files match skip patterns - build will be skipped"
         else
-          echo "✗ Found ${#NON_DOC_FILES[@]} non-documentation file change(s):"
-          printf '  - %s\n' "${NON_DOC_FILES[@]}"
+          echo "✗ Found ${#NON_MATCHING_FILES[@]} file(s) not matching skip patterns:"
+          printf '  - %s\n' "${NON_MATCHING_FILES[@]}"
           echo "Build will proceed"
         fi
         
