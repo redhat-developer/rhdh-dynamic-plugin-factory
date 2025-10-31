@@ -51,9 +51,21 @@ You can use the RHDH Plugin Factory either locally or via a container image.
 
 ### Container Image Setup
 
+#### Using Pre-built Community Images
+
+Pre-built container images are published to `quay.io/rhdh-community/dynamic-plugins-factory` with tags corresponding to the version of RHDH they were designed for:
+
+```bash
+# Pull the latest version
+podman pull quay.io/rhdh-community/dynamic-plugins-factory:latest
+
+# Or pull a specific RHDH version
+podman pull quay.io/rhdh-community/dynamic-plugins-factory:1.8
+```
+
 #### Building the Image
 
-Build the container image using Podman or Docker. Change `rhdh-dynamic-plugin-factory:latest` to your own image:
+Alternatively, you can build the container image locally using Podman or Docker:
 
 ```bash
 podman build -t rhdh-dynamic-plugin-factory:latest .
@@ -81,7 +93,7 @@ podman run --rm -it \
   -v ./config:/config:z \
   -v ./workspace:/workspace:z \
   -v ./outputs:/outputs:z \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
 ```
 
 **Key Differences from Local Usage:**
@@ -258,7 +270,7 @@ podman run --rm -it \
   -v ./workspace:/workspace:z \
   -v ./outputs:/outputs:z \
   -e LOG_LEVEL=DEBUG \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path workspaces/todo \
   --no-push-images
 ```
@@ -305,7 +317,7 @@ podman run --rm -it \
   -e REGISTRY_USERNAME=myuser \
   -e REGISTRY_PASSWORD=mytoken \
   -e REGISTRY_NAMESPACE=mynamespace \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path workspaces/announcements \
   --push-images
 ```
@@ -320,7 +332,7 @@ podman run --rm -it \
   -v ./workspace:/workspace:z \
   -v ./outputs:/outputs:z \
   --env-file ./config/.env \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --repo-path /workspace \
   --workspace-path workspaces/announcements \
   --output-dir /outputs \
@@ -355,7 +367,7 @@ podman run --rm -it \
   -v ./config:/config:z \
   -v /path/to/existing-workspace:/workspace:z \
   -v ./outputs:/outputs:z \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --config-dir /config \
   --workspace-path . \
   --use-local \
@@ -417,7 +429,7 @@ podman run --rm -it \
   -v ./examples/example-config-todo:/config:z \
   -v ./workspace:/workspace:z \
   -v ./outputs:/outputs:z \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path workspaces/todo \
   --no-push-images
 ```
@@ -490,7 +502,7 @@ podman run --rm -it \
   -v ./examples/example-config-gitlab:/config:z \
   -v ./workspace:/workspace:z \
   -v ./outputs:/outputs:z \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path . \
 ```
 
@@ -518,7 +530,7 @@ podman run --rm -it \
   -v ./examples/example-config-aws-ecs:/config:z \
   -v ./workspace:/workspace:z \
   -v ./outputs:/outputs:z \
-  rhdh-dynamic-plugin-factory:latest \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --repo-path /workspace \
 ```
 
