@@ -1,0 +1,199 @@
+# Build and publish the container image for the RHDH Dynamic Plugin Factory. 
+name: Build and Publish Container
+on:
+  workflow_dispatch:
+    inputs:
+      push-images:
+        description: 'Push images to registry'
+        required: false
+        default: 'true'
+  push:
+    branches:
+      - main
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  
+
+env:
+  REGISTRY: quay.io
+  REGISTRY_IMAGE: rhdh-community/dynamic-plugins-factory
+jobs:
+  build:
+    env:
+      HAS_QUAY_AUTH: ${{ secrets.QUAY_USERNAME != '' && secrets.QUAY_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # 5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Check if build should be skipped
+        id: skip_check
+        uses: ./.github/actions/should-skip-build
+        with:
+          registry: ${{ env.REGISTRY }}
+          image: ${{ env.REGISTRY_IMAGE }}
+          commit-sha: ${{ github.sha }}
+          check-image: 'true'
+          file-patterns: '.md'
+      - name: Install skopeo
+        if: steps.skip_check.outputs.should_skip != 'true'
+        run: |
+          echo "Installing skopeo"
+          sudo apt-get update -q
+          sudo apt-get install -y -q skopeo
+
+      - name: Set up QEMU
+        if: steps.skip_check.outputs.should_skip != 'true'
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+          
+      - name: Set up Docker Buildx
+        if: steps.skip_check.outputs.should_skip != 'true'
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        
+      - name: Login to Quay
+        if: steps.skip_check.outputs.should_skip != 'true' && env.HAS_QUAY_AUTH == 'true'
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Prepare Tags
+        if: steps.skip_check.outputs.should_skip != 'true'
+        id: prepare
+        run: |
+          set -e
+          echo "::group::Extract Version from __version__.py"
+          # Extract version from __version__.py
+          VERSION=$(grep -oP '__version__ = "\K[^"]+' src/rhdh_dynamic_plugin_factory/__version__.py)
+          echo "Version extracted: $FULL_VERSION"
+          
+          # Strip patch version (e.g., 1.8.0 -> 1.8)
+          VERSION=$(echo "$VERSION" | cut -d. -f1,2)
+          echo "Stripped version: $VERSION"
+          echo "::endgroup::"
+          
+          echo "::group::Get commit SHA"
+          # Get short SHA
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "Short SHA: $SHORT_SHA"
+          echo "::endgroup::"
+          
+          echo "::group::Query existing tags using skopeo"
+          REPOSITORY="docker://${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}"
+          echo "Querying repository: $REPOSITORY"
+          
+          # Grab all tags that contain the current version (e.g. 1.8)
+          EXCLUDES="latest|sha256-"
+          # since now using extended grep, add \ before the . so it only matches ., not anything
+          BASETAG="${VERSION//\./\\.}"
+          LATEST_TAG="$(skopeo list-tags ${REPOSITORY} 2>/dev/null | jq -r .Tags[] | grep -E -v "${EXCLUDES}" | grep -E "${BASETAG}" | sort -V)"
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No tags found for version $VERSION, starting at release 0"
+            LATEST_TAG="none"
+          else
+            LATEST_TAG=$(echo "$LATEST_TAG" | tail -1)
+            echo "Latest tag: $LATEST_TAG"
+          fi
+          echo "::endgroup::"
+          
+          echo "::group::Calculate new version and release number"
+          # Parse the latest tag to get version and release
+          if [[ "$LATEST_TAG" =~ ^([0-9]+\.[0-9]+)-([0-9]+)$ ]]; then
+            LATEST_VERSION="${BASH_REMATCH[1]}"
+            LATEST_RELEASE="${BASH_REMATCH[2]}"
+            echo "Latest version found: $LATEST_VERSION"
+            echo "Latest release found: $LATEST_RELEASE"
+            
+            NEW_RELEASE=$((LATEST_RELEASE + 1))
+            echo "Incrementing release to: $NEW_RELEASE"
+
+          else
+            NEW_RELEASE=0
+            echo "No valid latest tag found, starting at release: $RELEASE"
+          fi
+          echo "::endgroup::"
+          
+          echo "::group::Generate tags"
+          VERSION_RELEASE_TAG="${VERSION}-${NEW_RELEASE}"
+          echo "Generated tags:"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${VERSION_RELEASE_TAG}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${VERSION}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${SHORT_SHA}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:latest"
+          echo "::endgroup::"
+          
+          # Set outputs
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "release=${NEW_RELEASE}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "version_release_tag=${VERSION_RELEASE_TAG}" >> $GITHUB_OUTPUT
+          
+      - name: Build and Push Container Image
+        if: steps.skip_check.outputs.should_skip != 'true'
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ inputs.push-images == 'true'}}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version_release_tag }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.short_sha }}
+            ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Display Build Summary
+        if: steps.skip_check.outputs.should_skip != 'true'
+        run: |
+          echo "## Container Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Image Tags Generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag Type | Tag Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version-Release | \`${{ steps.prepare.outputs.version_release_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.prepare.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | \`${{ steps.prepare.outputs.short_sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Latest | \`latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Full Image References" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version_release_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${{ steps.prepare.outputs.short_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build Skipped Summary
+        if: steps.skip_check.outputs.should_skip == 'true'
+        run: |
+          echo "## Container Build Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Reason" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.skip_check.outputs.skip_reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Short SHA**: \`$(echo ${{ github.sha }} | cut -c1-7)\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No build or push operations were performed." >> $GITHUB_STEP_SUMMARY

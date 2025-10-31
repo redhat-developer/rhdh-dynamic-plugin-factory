@@ -32,4 +32,4 @@ COPY . .
 RUN mkdir -p /workspace /outputs /config
 
 
-ENTRYPOINT ["python3", "-m", "src.rhdh_dynamic_plugin_factory.cli"]
+ENTRYPOINT ["python3", "-m", "src.rhdh_dynamic_plugin_factory"]
