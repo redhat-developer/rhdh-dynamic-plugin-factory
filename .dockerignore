@@ -1,17 +1,26 @@
+# Local Configuration Folders
 config/
 outputs/
 workspace/
+
+# IDE 
 .vscode/
+# Git
 .git/
 .github/
 .gitignore
+# Python Virtual Environment
 .venv/
+# Cursor
 .cursor/
+# Python Caches and Test Files
 **/__pycache__/
-requirements.dev.txt
 tests/
 pytest.ini
 .pytest_cache/
 *.pyc
 htmlcov/
 .coverage
+
+# Development Dependencies
+requirements.dev.txt
