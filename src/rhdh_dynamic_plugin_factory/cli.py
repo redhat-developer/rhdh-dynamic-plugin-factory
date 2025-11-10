@@ -77,7 +77,7 @@ Examples:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/output"),
+        default=Path("/outputs"),
         help="Path to the output directory"
     )
     parser.add_argument(
