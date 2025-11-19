@@ -42,7 +42,9 @@ jobs:
           image: ${{ env.REGISTRY_IMAGE }}
           commit-sha: ${{ github.sha }}
           check-image: 'true'
-          file-patterns: '.md'
+          file-patterns: |
+            ^.*\.md$
+            ^renovate\.json$
       - name: Install skopeo
         if: steps.skip_check.outputs.should_skip != 'true'
         run: |

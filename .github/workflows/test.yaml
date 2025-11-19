@@ -26,7 +26,9 @@ jobs:
         with:
           commit-sha: ${{ github.sha }}
           check-image: 'false'
-          file-patterns: '.md'
+          file-patterns: |
+            ^.*\.md$
+            ^renovate\.json$
 
       - name: Set up Python
         if: steps.skip_check.outputs.should_skip != 'true'
