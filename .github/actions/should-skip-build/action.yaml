@@ -15,9 +15,9 @@ inputs:
     required: false
     default: 'true'
   file-patterns:
-    description: 'File extensions to check for skip logic (space or comma-separated, e.g., ".md")'
+    description: 'Regex patterns to match files for skip logic (space, comma, or newline-separated)'
     required: false
-    default: '.md'
+    default: '\.md$'
 outputs:
   should_skip:
     description: 'Whether the build should be skipped (true/false)'
@@ -145,9 +145,9 @@ runs:
         echo "$CHANGED_FILES"
         echo ""
         
-        # Parse file patterns (handle both space and comma-separated)
+        # Parse file patterns (handle space, comma, and newline-separated)
         FILE_PATTERNS="${{ inputs.file-patterns }}"
-        FILE_PATTERNS=$(echo "$FILE_PATTERNS" | tr ',' ' ')
+        FILE_PATTERNS=$(echo "$FILE_PATTERNS" | tr ',\n' ' ')
         
         echo "Checking for file patterns: $FILE_PATTERNS"
         echo ""
@@ -164,7 +164,7 @@ runs:
           # Check if file matches any of the patterns
           FILE_MATCHES="false"
           for pattern in $FILE_PATTERNS; do
-            if [[ "$file" =~ ${pattern}$ ]]; then
+            if [[ "$file" =~ ${pattern} ]]; then
               FILE_MATCHES="true"
               break
             fi
