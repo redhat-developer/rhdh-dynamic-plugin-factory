@@ -10,7 +10,7 @@ outputs/
 .vscode/
 
 # Tests
-tests/.pytest_cache/
-tests/htmlcov/
-tests/.coverage
-.coverage
+**/.pytest_cache/
+**/htmlcov/
+**/.coverage
+**/.coverage.*
