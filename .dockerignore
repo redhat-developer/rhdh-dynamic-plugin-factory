@@ -25,3 +25,9 @@ htmlcov/
 
 # Development Dependencies
 requirements.dev.txt
+
+# Renovate
+renovate.json
+
+# Logs
+**/*.log
