@@ -32,18 +32,14 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
         # Build plugins for the todo workspace in backstage/community-plugins w/o pushing to a registry
         # This assumes that ./config is populated with the required source.json and plugins-list.yaml files
-        python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./workspace --workspace-path workspaces/todo --log-level DEBUG --output-dir ./outputs
+        python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./source --workspace-path workspaces/todo --log-level DEBUG --output-dir ./outputs
         """
     )
-    
-    # Version flag
     parser.add_argument(
         "-v", "--version",
         action="version",
         version=__version__
     )
-    
-    # Global options
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -59,7 +55,7 @@ Examples:
     parser.add_argument(
         "--repo-path",
         type=Path,
-        default=Path("/workspace"),
+        default=Path("/source"),
         help="Path to store the plugin source code"
     )
     parser.add_argument(
@@ -67,7 +63,6 @@ Examples:
         type=Path,
         help="Path to the workspace from root of the repository"
     )
-
     parser.add_argument(
         "--push-images",
         action=argparse.BooleanOptionalAction,
@@ -97,7 +92,6 @@ def install_dependencies(workspace_path: Path) -> bool:
     """Install dependencies in the workspace using yarn install with corepack."""
     logger.info("[bold blue]Installing workspace dependencies[/bold blue]")
 
-    # Commands to run in sequence
     commands = [
         (["pwd"], "Checking workspace path"),
         (["corepack", "enable"], "Enabling corepack"),
@@ -107,14 +101,12 @@ def install_dependencies(workspace_path: Path) -> bool:
     ]
         
     try:
-        # Set up environment for non-interactive corepack
         env = os.environ.copy()
         env['COREPACK_ENABLE_DOWNLOAD_PROMPT'] = '0'  # Disable download prompts
         
         for cmd, description in commands:
             logger.info(f"[cyan]{description}...[/cyan]")
             
-            # Stream output in real-time
             returncode = run_command_with_streaming(
                 cmd,
                 logger,
@@ -137,11 +129,9 @@ def main():
     """Main entry point for the RHDH Dynamic Plugin Factory."""
     parser = create_parser()
     args = parser.parse_args()
-    # Set up logging
     setup_logging(level=args.log_level, verbose=args.verbose)
     logger.info("[bold blue]Setting up configuration directory[/bold blue]")
 
-    # Load configuration
     config = PluginFactoryConfig.load_from_env(args=args, env_file=args.config_dir / ".env")
 
     try:
@@ -151,7 +141,6 @@ def main():
         config.logger.error(f"[red]Configuration error: {e}[/red]")
         sys.exit(1)
     
-    # Clone repository if needed
     if source_config and not config.use_local:
         logger.info("[bold blue]Repository Setup[/bold blue]")
         if not source_config.clone_to_path(config.repo_path):
@@ -162,7 +151,6 @@ def main():
             logger.info("[bold blue]--use-local flag is set, using local repository[/bold blue]")
         else:
             logger.info("[bold blue]No source configuration found, using local repository[/bold blue]")
-        # Use local repository (either --use-local flag or no source_config)
         if not config.repo_path.exists():
             logger.error(f"Local repository does not exist at: {config.repo_path}")
             logger.error("Either provide source.json to clone the repository, or ensure workspace exists at directory specified by --repo-path")
@@ -173,14 +161,11 @@ def main():
     if not config.auto_generate_plugins_list():
         logger.error("Failed to generate plugins list")
         sys.exit(1)
-    # Apply patches and overlays
     logger.info("[bold blue]Applying Patches and Overlays[/bold blue]")
     if not config.apply_patches_and_overlays():
         logger.error("Failed to apply patches and overlays")
         sys.exit(1)
 
-    
-    # Install Dependencies
     logger.info("[bold blue]Installing Dependencies[/bold blue]")
     
     workspace_path = config.repo_path.joinpath(config.workspace_path).absolute()
@@ -188,7 +173,6 @@ def main():
         logger.error("Failed to install dependencies")
         sys.exit(1)
     
-    # Export plugins
     logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
     if not config.export_plugins(args.output_dir, args.push_images):
         logger.error("Plugin export failed")

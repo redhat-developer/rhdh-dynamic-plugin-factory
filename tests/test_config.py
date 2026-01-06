@@ -5,6 +5,7 @@ Tests the configuration loading, validation, and setup functionality
 without executing shell scripts.
 """
 
+import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
@@ -20,7 +21,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         """Test loading configuration with all required fields present."""
         # Update mock_args to use the setup_test_env paths
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         
         # Ensure environment variables are set
@@ -34,18 +35,18 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config.rhdh_cli_version == "1.7.2"
         assert config.log_level == "INFO"
         assert config.config_dir == setup_test_env["config_dir"]
-        assert config.repo_path == setup_test_env["workspace_dir"]
-        assert config.workspace_path == Path(".")
+        assert config.repo_path == setup_test_env["source_dir"]
+        assert config.workspace_path == "."
         assert config.use_local is False
         
-        # Verify directories were created
-        assert config.config_dir.exists()
-        assert config.repo_path.exists()
+        # Verify directories exist
+        assert os.path.exists(config.config_dir)
+        assert os.path.exists(config.repo_path)
         
-        # Verify path types
-        assert isinstance(config.config_dir, Path)
-        assert isinstance(config.repo_path, Path)
-        assert isinstance(config.workspace_path, Path)
+        # Verify path types are strings
+        assert isinstance(config.config_dir, str)
+        assert isinstance(config.repo_path, str)
+        assert isinstance(config.workspace_path, str)
     
     def test_load_from_env_missing_rhdh_cli_version(self, mock_args, setup_test_env, clean_env):
         """Test that missing RHDH_CLI_VERSION raises ValueError."""
@@ -53,7 +54,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         clean_env.setenv("WORKSPACE_PATH", ".")
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         
         # Patch to prevent loading from default.env
@@ -69,7 +70,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         monkeypatch.setenv("LOG_LEVEL", "INVALID_LEVEL")
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         mock_args.log_level = "INVALID_LEVEL"
         
@@ -84,7 +85,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         monkeypatch.setenv("LOG_LEVEL", log_level)
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         mock_args.log_level = log_level
         
@@ -103,7 +104,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         custom_env_file.write_text("RHDH_CLI_VERSION=1.5.0\n")
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         
         # Load the config - the custom env file is loaded with override=True
@@ -127,7 +128,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         monkeypatch.setenv("WORKSPACE_PATH", ".")
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         
         # Load with custom env file (should be loaded and override defaults)
@@ -152,14 +153,18 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config.registry_namespace == "test-namespace"
     
     def test_load_from_env_missing_workspace_path(self, mock_args, setup_test_env, monkeypatch):
-        """Test that missing workspace_path handles gracefully with sys.exit."""
+        """Test that missing workspace_path raises ValueError."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        # Don't set WORKSPACE_PATH env var to test fallback
+        monkeypatch.delenv("WORKSPACE_PATH", raising=False)
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = None  # Missing workspace_path
         
-        with pytest.raises(SystemExit):
+        # When workspace_path is None and WORKSPACE_PATH env var is not set,
+        # validation should raise ValueError
+        with pytest.raises(ValueError, match="WORKSPACE_PATH must be set"):
             PluginFactoryConfig.load_from_env(mock_args)
     
     def test_load_from_env_directory_creation(self, mock_args, tmp_path, monkeypatch):
@@ -178,15 +183,15 @@ class TestPluginFactoryConfigLoadFromEnv:
         # Create dummy file in repo_path to satisfy validation
         (new_repo_path / "dummy.txt").write_text("test")
         
-        mock_args.config_dir = new_config_dir
-        mock_args.repo_path = new_repo_path
+        mock_args.config_dir = str(new_config_dir)
+        mock_args.repo_path = str(new_repo_path)
         mock_args.workspace_path = "."
         
         config = PluginFactoryConfig.load_from_env(mock_args)
         
-        # Verify directories were created
-        assert config.config_dir.exists()
-        assert config.repo_path.exists()
+        # Verify directories exist
+        assert os.path.exists(config.config_dir)
+        assert os.path.exists(config.repo_path)
         assert new_config_dir.exists()
         assert new_repo_path.exists()
     
@@ -201,7 +206,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         monkeypatch.setenv("REGISTRY_INSECURE", "true")
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         
         config = PluginFactoryConfig.load_from_env(mock_args)
@@ -220,7 +225,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         monkeypatch.setenv("REGISTRY_INSECURE", "false")
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         
         config = PluginFactoryConfig.load_from_env(mock_args)
@@ -233,7 +238,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         monkeypatch.setenv("WORKSPACE_PATH", ".")
         
         mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["workspace_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
         mock_args.use_local = True
         
@@ -254,8 +259,8 @@ class TestPluginFactoryConfigLoadFromEnv:
         repo_path.mkdir(parents=True, exist_ok=True)
         # repo_path is empty (no files)
         
-        mock_args.config_dir = config_dir
-        mock_args.repo_path = repo_path
+        mock_args.config_dir = str(config_dir)
+        mock_args.repo_path = str(repo_path)
         mock_args.workspace_path = "."
         
         with pytest.raises(ValueError, match="source.json not found"):
@@ -275,16 +280,16 @@ class TestPluginFactoryConfigLoadFromEnv:
         repo_path.mkdir(parents=True, exist_ok=True)
         (repo_path / "some_file.txt").write_text("content")
         
-        mock_args.config_dir = config_dir
-        mock_args.repo_path = repo_path
+        mock_args.config_dir = str(config_dir)
+        mock_args.repo_path = str(repo_path)
         mock_args.workspace_path = "."
         
         # Should not raise, just log warning
         config = PluginFactoryConfig.load_from_env(mock_args)
         
         assert config is not None
-        assert config.config_dir == config_dir
-        assert config.repo_path == repo_path
+        assert config.config_dir == str(config_dir)
+        assert config.repo_path == str(repo_path)
 
 
 class TestLoadRegistryConfig:
@@ -298,9 +303,9 @@ class TestLoadRegistryConfig:
         # Create a minimal config without registry settings
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
         # Mock the logger to verify log messages
         with patch.object(config, 'logger') as mock_logger:
@@ -319,9 +324,9 @@ class TestLoadRegistryConfig:
         # Create config without registry_url but with namespace
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = None
         config.registry_namespace = "test-namespace"
         
@@ -336,9 +341,9 @@ class TestLoadRegistryConfig:
         # Create config with registry_url but without namespace
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = None
         
@@ -353,9 +358,9 @@ class TestLoadRegistryConfig:
         # Create config with full registry configuration
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         config.registry_username = "test-user"
@@ -398,9 +403,9 @@ class TestLoadRegistryConfig:
         # Create config with full registry configuration
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         config.registry_username = "test-user"
@@ -435,9 +440,9 @@ class TestLoadRegistryConfig:
         # Create config without credentials
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         config.registry_username = None
@@ -455,9 +460,9 @@ class TestLoadRegistryConfig:
         # Create config without username
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         config.registry_username = None
@@ -475,9 +480,9 @@ class TestLoadRegistryConfig:
         # Create config without password
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         config.registry_username = "test-user"
@@ -495,9 +500,9 @@ class TestLoadRegistryConfig:
         # Create config with insecure registry
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "localhost:5000"
         config.registry_namespace = "test-namespace"
         config.registry_username = "test-user"
@@ -531,9 +536,9 @@ class TestLoadRegistryConfig:
         # Create config with secure registry (default)
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         config.registry_username = "test-user"
@@ -572,9 +577,9 @@ class TestApplyPatchesAndOverlays:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
         # Mock the script path to exist
         script_dir = Path(__file__).parent.parent / "scripts"
@@ -597,15 +602,16 @@ class TestApplyPatchesAndOverlays:
                 # Verify command structure
                 cmd = call_args[0][0]
                 assert len(cmd) == 3
-                assert cmd[0] == str(script_path)
-                assert cmd[1] == str(config.config_dir.absolute())
-                assert cmd[2] == str(config.repo_path.joinpath(config.workspace_path).absolute())
+                assert cmd[0] == str(script_path.absolute())
+                assert cmd[1] == os.path.abspath(config.config_dir)
+                expected_workspace = os.path.abspath(os.path.join(config.repo_path, config.workspace_path))
+                assert cmd[2] == expected_workspace
                 
                 # Verify logger was passed
                 assert call_args[0][1] == config.logger
                 
                 # Verify working directory
-                assert call_args[1]["cwd"] == config.repo_path.joinpath(config.workspace_path).absolute()
+                assert call_args[1]["cwd"] == Path(expected_workspace)
                 
                 # Verify stderr_log_func is set to logger.error
                 assert call_args[1]["stderr_log_func"] == config.logger.error
@@ -618,9 +624,9 @@ class TestApplyPatchesAndOverlays:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
         # Mock script path to not exist
         with patch.object(Path, "exists", return_value=False):
@@ -643,9 +649,9 @@ class TestApplyPatchesAndOverlays:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
         # Mock run_command_with_streaming to return failure
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -670,9 +676,9 @@ class TestApplyPatchesAndOverlays:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
         # Mock run_command_with_streaming to raise an exception
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -703,47 +709,49 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
-                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                        mock_run_cmd.return_value = 0
-                        mock_display.return_value = False  # No failures
-                        
-                        result = config.export_plugins(output_dir, push_images=False)
-                        
-                        # Verify result
-                        assert result is True
-                        
-                        # Verify run_command_with_streaming was called
-                        mock_run_cmd.assert_called_once()
-                        call_args = mock_run_cmd.call_args
-                        
-                        # Verify command structure
-                        cmd = call_args[0][0]
-                        assert len(cmd) == 1
-                        assert "export-workspace.sh" in cmd[0]
-                        
-                        # Verify logger was passed
-                        assert call_args[0][1] == config.logger
-                        
-                        # Verify working directory
-                        assert call_args[1]["cwd"] == config.repo_path.joinpath(config.workspace_path).absolute()
-                        
-                        # Verify env was passed
-                        env = call_args[1]["env"]
-                        assert "INPUTS_DESTINATION" in env
-                        assert "INPUTS_PLUGINS_FILE" in env
-                        assert "INPUTS_PUSH_CONTAINER_IMAGE" in env
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
+                        with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
+                            mock_run_cmd.return_value = 0
+                            mock_display.return_value = False  # No failures
+                            
+                            result = config.export_plugins(output_dir, push_images=False)
+                            
+                            # Verify result
+                            assert result is True
+                            
+                            # Verify run_command_with_streaming was called
+                            mock_run_cmd.assert_called_once()
+                            call_args = mock_run_cmd.call_args
+                            
+                            # Verify command structure
+                            cmd = call_args[0][0]
+                            assert len(cmd) == 1
+                            assert "export-workspace.sh" in cmd[0]
+                            
+                            # Verify logger was passed
+                            assert call_args[0][1] == config.logger
+                            
+                            # Verify working directory
+                            expected_workspace = os.path.abspath(os.path.join(config.repo_path, config.workspace_path))
+                            assert call_args[1]["cwd"] == Path(expected_workspace)
+                            
+                            # Verify env was passed
+                            env = call_args[1]["env"]
+                            assert "INPUTS_DESTINATION" in env
+                            assert "INPUTS_PLUGINS_FILE" in env
+                            assert "INPUTS_PUSH_CONTAINER_IMAGE" in env
     
     def test_export_plugins_environment_variables_no_push(self, setup_test_env, monkeypatch, tmp_path):
         """Test that environment variables are correctly set when push_images is False."""
@@ -753,39 +761,40 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
-                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                        mock_run_cmd.return_value = 0
-                        mock_display.return_value = False
-                        
-                        result = config.export_plugins(output_dir, push_images=False)
-                        
-                        # Get the env dict that was passed
-                        env = mock_run_cmd.call_args[1]["env"]
-                        
-                        # Verify required environment variables
-                        assert env["INPUTS_SCALPRUM_CONFIG_FILE_NAME"] == "scalprum-config.json"
-                        assert env["INPUTS_SOURCE_OVERLAY_FOLDER_NAME"] == "overlay"
-                        assert env["INPUTS_SOURCE_PATCH_FILE_NAME"] == "patch"
-                        assert env["INPUTS_APP_CONFIG_FILE_NAME"] == "app-config.dynamic.yaml"
-                        assert env["INPUTS_CLI_PACKAGE"] == "@red-hat-developer-hub/cli"
-                        assert env["INPUTS_PUSH_CONTAINER_IMAGE"] == "false"
-                        assert env["INPUTS_JANUS_CLI_VERSION"] == "1.7.2"
-                        assert env["INPUTS_IMAGE_REPOSITORY_PREFIX"] == "quay.io/test-namespace"
-                        assert env["INPUTS_CONTAINER_BUILD_TOOL"] == "buildah"
-                        assert str(output_dir.absolute()) in env["INPUTS_DESTINATION"]
-                        assert "plugins-list.yaml" in env["INPUTS_PLUGINS_FILE"]
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
+                        with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
+                            mock_run_cmd.return_value = 0
+                            mock_display.return_value = False
+                            
+                            _result = config.export_plugins(output_dir, push_images=False)
+                            
+                            # Get the env dict that was passed
+                            env = mock_run_cmd.call_args[1]["env"]
+                            
+                            # Verify required environment variables
+                            assert env["INPUTS_SCALPRUM_CONFIG_FILE_NAME"] == "scalprum-config.json"
+                            assert env["INPUTS_SOURCE_OVERLAY_FOLDER_NAME"] == "overlay"
+                            assert env["INPUTS_SOURCE_PATCH_FILE_NAME"] == "patch"
+                            assert env["INPUTS_APP_CONFIG_FILE_NAME"] == "app-config.dynamic.yaml"
+                            assert env["INPUTS_CLI_PACKAGE"] == "@red-hat-developer-hub/cli"
+                            assert env["INPUTS_PUSH_CONTAINER_IMAGE"] == "false"
+                            assert env["INPUTS_JANUS_CLI_VERSION"] == "1.7.2"
+                            assert env["INPUTS_IMAGE_REPOSITORY_PREFIX"] == "quay.io/test-namespace"
+                            assert env["INPUTS_CONTAINER_BUILD_TOOL"] == "buildah"
+                            assert str((tmp_path / "output").absolute()) in env["INPUTS_DESTINATION"]
+                            assert "plugins-list.yaml" in env["INPUTS_PLUGINS_FILE"]
     
     def test_export_plugins_environment_variables_with_push(self, setup_test_env, monkeypatch, tmp_path):
         """Test that environment variables are correctly set when push_images is True."""
@@ -795,29 +804,30 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
-                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                        mock_run_cmd.return_value = 0
-                        mock_display.return_value = False
-                        
-                        result = config.export_plugins(output_dir, push_images=True)
-                        
-                        # Get the env dict that was passed
-                        env = mock_run_cmd.call_args[1]["env"]
-                        
-                        # Verify INPUTS_PUSH_CONTAINER_IMAGE is set to "true"
-                        assert env["INPUTS_PUSH_CONTAINER_IMAGE"] == "true"
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
+                        with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
+                            mock_run_cmd.return_value = 0
+                            mock_display.return_value = False
+                            
+                            _result = config.export_plugins(output_dir, push_images=True)
+                            
+                            # Get the env dict that was passed
+                            env = mock_run_cmd.call_args[1]["env"]
+                            
+                            # Verify INPUTS_PUSH_CONTAINER_IMAGE is set to "true"
+                            assert env["INPUTS_PUSH_CONTAINER_IMAGE"] == "true"
     
     def test_export_plugins_default_registry_values(self, setup_test_env, monkeypatch, tmp_path):
         """Test that default values are used when registry_url or registry_namespace are None."""
@@ -827,29 +837,30 @@ class TestExportPlugins:
         # Create config without registry settings
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = None
         config.registry_namespace = None
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
-                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                        mock_run_cmd.return_value = 0
-                        mock_display.return_value = False
-                        
-                        _result = config.export_plugins(output_dir, push_images=False)
-                        
-                        # Get the env dict that was passed
-                        env = mock_run_cmd.call_args[1]["env"]
-                        
-                        # Verify default values are used
-                        assert env["INPUTS_IMAGE_REPOSITORY_PREFIX"] == "localhost/default"
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
+                        with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
+                            mock_run_cmd.return_value = 0
+                            mock_display.return_value = False
+                            
+                            _result = config.export_plugins(output_dir, push_images=False)
+                            
+                            # Get the env dict that was passed
+                            env = mock_run_cmd.call_args[1]["env"]
+                            
+                            # Verify default values are used
+                            assert env["INPUTS_IMAGE_REPOSITORY_PREFIX"] == "localhost/default"
     
     def test_export_plugins_script_not_found(self, setup_test_env, monkeypatch, tmp_path):
         """Test that export_plugins returns False when script doesn't exist."""
@@ -859,11 +870,11 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock script path to not exist
         with patch.object(Path, "exists", return_value=False):
@@ -886,32 +897,36 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock: script exists but plugins-list.yaml doesn't
-        original_exists = Path.exists
+        original_path_exists = Path.exists
         
-        def exists_side_effect(path_obj):
+        def path_exists_side_effect(path_obj):
             if "export-workspace.sh" in str(path_obj):
                 return True
-            elif "plugins-list.yaml" in str(path_obj):
-                return False
-            return original_exists(path_obj)
+            return original_path_exists(path_obj)
         
-        with patch.object(Path, "exists", new=exists_side_effect):
-            with patch.object(config, "logger") as mock_logger:
-                result = config.export_plugins(output_dir, push_images=False)
-                
-                # Verify result
-                assert result is False
-                
-                # Verify error was logged
-                error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
-                assert any("No plugins file found" in str(call) for call in error_calls)
+        def os_exists_side_effect(path_str):
+            if "plugins-list.yaml" in str(path_str):
+                return False
+            return True
+        
+        with patch.object(Path, "exists", new=path_exists_side_effect):
+            with patch("os.path.exists", side_effect=os_exists_side_effect):
+                with patch.object(config, "logger") as mock_logger:
+                    result = config.export_plugins(output_dir, push_images=False)
+                    
+                    # Verify result
+                    assert result is False
+                    
+                    # Verify error was logged
+                    error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
+                    assert any("No plugins file found" in str(call) for call in error_calls)
     
     def test_export_plugins_script_fails(self, setup_test_env, monkeypatch, tmp_path):
         """Test that export_plugins returns False when script returns non-zero exit code."""
@@ -921,29 +936,30 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock run_command_with_streaming to return failure
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                    with patch.object(config, "logger") as mock_logger:
-                        mock_run_cmd.return_value = 1
-                        
-                        result = config.export_plugins(output_dir, push_images=False)
-                        
-                        # Verify result
-                        assert result is False
-                        
-                        # Verify error was logged with exit code
-                        error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
-                        assert any("exit code 1" in str(call) for call in error_calls)
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
+                        with patch.object(config, "logger") as mock_logger:
+                            mock_run_cmd.return_value = 1
+                            
+                            result = config.export_plugins(output_dir, push_images=False)
+                            
+                            # Verify result
+                            assert result is False
+                            
+                            # Verify error was logged with exit code
+                            error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
+                            assert any("exit code 1" in str(call) for call in error_calls)
     
     def test_export_plugins_has_failures(self, setup_test_env, monkeypatch, tmp_path):
         """Test that export_plugins returns False when display_export_results indicates failures."""
@@ -953,31 +969,32 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock: script succeeds but display_export_results indicates failures
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
-                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                        with patch.object(config, "logger") as mock_logger:
-                            mock_run_cmd.return_value = 0
-                            mock_display.return_value = True  # Has failures
-                            
-                            result = config.export_plugins(output_dir, push_images=False)
-                            
-                            # Verify result
-                            assert result is False
-                            
-                            # Verify error was logged
-                            error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
-                            assert any("completed with failures" in str(call) for call in error_calls)
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
+                        with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
+                            with patch.object(config, "logger") as mock_logger:
+                                mock_run_cmd.return_value = 0
+                                mock_display.return_value = True  # Has failures
+                                
+                                result = config.export_plugins(output_dir, push_images=False)
+                                
+                                # Verify result
+                                assert result is False
+                                
+                                # Verify error was logged
+                                error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
+                                assert any("completed with failures" in str(call) for call in error_calls)
     
     def test_export_plugins_exception(self, setup_test_env, monkeypatch, tmp_path):
         """Test that export_plugins handles exceptions gracefully."""
@@ -987,29 +1004,30 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Mock run_command_with_streaming to raise an exception
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                    with patch.object(config, "logger") as mock_logger:
-                        mock_run_cmd.side_effect = Exception("Test exception")
-                        
-                        result = config.export_plugins(output_dir, push_images=False)
-                        
-                        # Verify result
-                        assert result is False
-                        
-                        # Verify error was logged
-                        mock_logger.error.assert_called()
-                        error_msg = mock_logger.error.call_args[0][0]
-                        assert "Failed to run export script" in error_msg
-                        assert "Test exception" in error_msg
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
+                        with patch.object(config, "logger") as mock_logger:
+                            mock_run_cmd.side_effect = Exception("Test exception")
+                            
+                            result = config.export_plugins(output_dir, push_images=False)
+                            
+                            # Verify result
+                            assert result is False
+                            
+                            # Verify error was logged
+                            mock_logger.error.assert_called()
+                            error_msg = mock_logger.error.call_args[0][0]
+                            assert "Failed to run export script" in error_msg
+                            assert "Test exception" in error_msg
     
     def test_export_plugins_custom_env_file(self, setup_test_env, monkeypatch, tmp_path):
         """Test that export_plugins loads custom .env file from config directory."""
@@ -1019,33 +1037,34 @@ class TestExportPlugins:
         # Create config
         config = PluginFactoryConfig()
         config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["workspace_dir"]
+        config.repo_path = setup_test_env["source_dir"]
         config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = Path(".")
+        config.workspace_path = "."
         config.registry_url = "quay.io"
         config.registry_namespace = "test-namespace"
         
         # Create a custom .env file in config directory
-        custom_env = setup_test_env["config_dir"] / ".env"
+        custom_env = Path(setup_test_env["config_dir"]) / ".env"
         custom_env.write_text("CUSTOM_VAR=custom_value\n")
         
-        output_dir = tmp_path / "output"
+        output_dir = str(tmp_path / "output")
         
         # Track load_dotenv calls
         with patch.object(Path, "exists", return_value=True):
-            with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
-                with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
-                    with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv") as mock_load_dotenv:
-                        with patch.object(config, "logger") as mock_logger:
-                            mock_run_cmd.return_value = 0
-                            mock_display.return_value = False
-                            
-                            _result = config.export_plugins(output_dir, push_images=False)
-                            
-                            # Verify load_dotenv was called
-                            assert mock_load_dotenv.call_count >= 1
-                            
-                            # Verify debug log about loading custom env
-                            debug_calls = [call[0][0] for call in mock_logger.debug.call_args_list]
-                            assert any(".env" in str(call) for call in debug_calls)
+            with patch("os.path.exists", return_value=True):
+                with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
+                    with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
+                        with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv") as mock_load_dotenv:
+                            with patch.object(config, "logger") as mock_logger:
+                                mock_run_cmd.return_value = 0
+                                mock_display.return_value = False
+                                
+                                _result = config.export_plugins(output_dir, push_images=False)
+                                
+                                # Verify load_dotenv was called
+                                assert mock_load_dotenv.call_count >= 1
+                                
+                                # Verify debug log about loading custom env
+                                debug_calls = [call[0][0] for call in mock_logger.debug.call_args_list]
+                                assert any(".env" in str(call) for call in debug_calls)
 

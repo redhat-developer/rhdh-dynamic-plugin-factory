@@ -71,15 +71,12 @@ def run_command_with_streaming(
         args=(process.stderr, stderr_log_func)
     )
     
-    # Start both threads
     stdout_thread.start()
     stderr_thread.start()
     
-    # Wait for both threads to complete
     stdout_thread.join()
     stderr_thread.join()
     
-    # Wait for process to complete and get return code
     process.wait()
     
     return process.returncode
