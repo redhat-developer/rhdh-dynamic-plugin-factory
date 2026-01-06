@@ -65,7 +65,7 @@ Run the factory with your local build:
 podman run --rm -it \
   --device /dev/fuse \
   -v ./config:/config:z \
-  -v ./workspace:/workspace:z \
+  -v ./source:/source:z \
   -v ./outputs:/outputs:z \
   rhdh-dynamic-plugin-factory:dev \
   --workspace-path workspaces/todo \
@@ -163,7 +163,7 @@ The factory will automatically read the registry credentials from `./config/.env
 ```bash
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./config \
-  --repo-path ./existing-workspace \
+  --repo-path ./source \
   --workspace-path . \
   --output-dir ./outputs \
   --use-local
@@ -318,9 +318,6 @@ pytest tests/
 
 # Check code coverage
 pytest tests/ --cov=src/rhdh_dynamic_plugin_factory --cov-report=term-missing
-
-# Format code (if using black)
-black src/ tests/
 
 # Check types (if using mypy)
 mypy src/

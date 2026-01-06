@@ -7,6 +7,9 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
 - [RHDH Dynamic Plugin Factory](#rhdh-dynamic-plugin-factory)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
+  - [Key Terminology](#key-terminology)
+    - [Backstage Workspace Structure](#backstage-workspace-structure)
+    - [`--workspace-path` vs `--repo-path`](#--workspace-path-vs---repo-path)
   - [Installation](#installation)
     - [Using Pre-built Container Images](#using-pre-built-container-images)
     - [Container Requirements](#container-requirements)
@@ -48,6 +51,48 @@ The RHDH Plugin Factory automates the process of converting Backstage plugins in
 - **Dynamic Plugin Packaging**: Build, export and package plugins using the RHDH CLI
 - **Container Image Publishing**: Optionally push to container registries (Quay, OpenShift, etc.)
 
+## Key Terminology
+
+A backstage plugin workspace is a [yarn workspace](https://yarnpkg.com/features/workspaces) within a Backstage repository that contains plugins to export. Note that there are cases where the backstage repository itself is the plugin workspace.
+
+### Backstage Workspace Structure
+
+A Backstage plugin workspace is a yarn workspace (either a root workspace or nested within a monorepo) that typically follows this structure:
+
+```text
+<backstage-workspace>/
+├── package.json          # Workspace root package.json (defines the yarn workspace)
+├── plugins/              # Contains the plugins to export as dynamic plugins
+│   ├── my-plugin/
+│   └── my-plugin-backend/
+└── packages/             # Optional: Contains frontend/backend apps for local development
+    ├── app/              # (Usually unused for dynamic plugin export)
+    └── backend/
+```
+
+Examples:
+
+- In the [Backstage Community Plugins](https://github.com/backstage/community-plugins) repository, each directory under `workspaces/` is a Backstage workspace (e.g., `workspaces/todo`, `workspaces/announcements`)
+- A standalone Backstage repository may have its workspace be the repository itself such as in the case of the [PagerDuty plugins](https://github.com/PagerDuty/backstage-plugins)
+
+### `--workspace-path` vs `--repo-path`
+
+These two options work together to locate your plugin workspace:
+
+- `--repo-path`: Where the backstage repository containing the plugin workspace is located (the cloned repository destination or your local repo)
+  - Note: this is automatically resolved to `/source` if not provided
+  - *Most* of the time this is NOT the same as the plugin workspace containing the plugins you want to export, the exception is when the backstage plugin repository itself is a standalone plugin workspace.
+- `--workspace-path`: The relative path from the repository root to the workspace containing your plugins
+
+Ex: To build plugins from the TODO workspace in the community-plugins repository:
+
+```text
+--repo-path /source                       # Repository cloned to the /source directory
+--workspace-path workspaces/todo          # Workspace is at /source/workspaces/todo
+```
+
+The factory will then search for plugins defined in the `plugins-list.yaml` file with respect to the workspace `<repo-path>/<workspace-path>/`
+
 ## Installation
 
 The RHDH Plugin Factory is distributed as a pre-built container image. It is recommended to use Podman for all platforms.
@@ -70,7 +115,7 @@ podman pull quay.io/rhdh-community/dynamic-plugins-factory:1.8
 
 The container requires specific capabilities and device access for building dynamic plugins:
 
-- **Volume Mounts**: Mount your configuration, workspace, and/or output directories to the `/config`, `/workspace` and `/outputs` directories respectively
+- **Volume Mounts**: Mount your configuration, plugin repository, and/or output directory to the `/config`, `/source` and `/outputs` directories respectively
 - **Device Access**: Mount `/dev/fuse` for filesystem operations (required for buildah)
 - **SELinux Context**: Use `:z` flag for volume mounts on SELinux-enabled systems (RHEL/Fedora/CentOS)
 
@@ -82,13 +127,13 @@ The `--device /dev/fuse` flag passes the FUSE device from the Linux environment 
 podman run --rm -it \
   --device /dev/fuse \
   -v ./config:/config:z \
-  -v ./workspace:/workspace:z \
+  -v ./source:/source:z \
   -v ./outputs:/outputs:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path <path-to-workspace>
 ```
 
-**Note:** The `--config-dir`, `--repo-path`, and `--output-dir` options use default values of `/config`, `/workspace`, and `/outputs` respectively, which map to your local directories through volume mounts.
+**Note:** The `--config-dir`, `--repo-path`, and `--output-dir` options use default values of `/config`, `/source`, and `/outputs` respectively, which map to your local directories through volume mounts.
 
 ### Running Locally Without Containers
 
@@ -103,14 +148,16 @@ The factory expects the following directory structure:
 ```bash
 ./
 ├── config/                                   # Configuration directory (Can be set with --config-dir)
-│   ├── .env                                  # Optional: Override environment variables
+│   ├── .env                                  # Optional (if not pushing): Override environment variables + provide registry credentials
 │   ├── source.json                           # Source repository configuration
 │   ├── plugins-list.yaml                     # List of plugins to build
 │   ├── patches/                              # Optional: Patch files to apply
 │   └── <path-to-plugin-in-workspace>/overlays/   # Optional: Files to overlay on plugin source
-├── workspace/                                # Source code location (Can be set with --repo-path)
+├── source/                                   # Source code location (Can be set with --repo-path)
 └── outputs/                                  # Build output directory (Can be set with --output-dir)
 ```
+
+Note: `source/` in this case refers to the default source code location if not provided by `--repo-path` and is not to be mistaken with the workspace containing the plugins to export. Refer to [Key Terminology](#--workspace-path-vs---repo-path) for more details.
 
 ### Configuration Files
 
@@ -182,6 +229,20 @@ WORKSPACE_PATH=<path_to_workspace_with_respect_to_plugin_repo_root>
 
 `WORKSPACE_PATH` can be set in lieu of the `--workspace-path` argument
 
+Alternatively,  you can pass the `.env` file directly through podman using the `--env-file` argument instead of placing a `.env` file in the config directory:
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  --env-file ./my-env-file.env \
+  -v ./config:/config:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --workspace-path workspaces/todo \
+  --push-images
+```
+
+This approach keeps your credentials separate from the config directory and can be useful for CI/CD pipelines or when you want to reuse the same environment file across different configurations.
+
 ### Patches and Overlays
 
 > WARNING: This is a destructive operation
@@ -226,7 +287,7 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--config-dir` | `/config` | Configuration directory containing `source.json`, `plugins-list.yaml`, patches, and overlays |
-| `--repo-path` | `/workspace` | Path where plugin source code will be cloned/stored |
+| `--repo-path` | `/source` | Path where plugin source code will be cloned/stored |
 | `--workspace-path` | (required) | Path to the workspace from repository root (e.g., `workspaces/todo`) |
 | `--output-dir` | `/outputs` | Directory for build artifacts (`.tgz` files and container images) |
 | `--push-images` / `--no-push-images` | `--no-push-images` | Whether to push container images to registry. Defaults to not pushing if no argument is provided |
@@ -241,10 +302,10 @@ When using the container, you can mount directories based on your needs:
 | Volume Mount | Required? | Purpose | When to Use |
 |--------------|-----------|---------|-------------|
 | `-v ./config:/config:z` | **Required** | Configuration files | Always - contains your `plugins-list.yaml`, `source.json`, patches, and overlays |
-| `-v ./workspace:/workspace:z` | Optional | Source code location | Only if using `--use-local` OR if you want to preserve/inspect the cloned/patched remote repository |
-| `-v ./outputs:/outputs:z` | Optional | Build artifacts | Only if you want the output `.tgz` files saved locally (otherwise they stay in the container) |
+| `-v ./source:/source:z` | Optional | Source code location | Only if using `--use-local` OR if you want to preserve/inspect the cloned/patched remote repository |
+| `-v ./outputs:/outputs:z` | Optional | Stores bBuild artifacts | Only if you want the output `.tgz` files saved locally (otherwise they stay in the container) |
 
-**Important**: These volume mount paths (`/config`, `/workspace`, `/outputs`) correspond to the default values of `--config-dir`, `--repo-path`, and `--output-dir`. If you override these arguments with custom paths, adjust your volume mounts accordingly.
+**Important**: These volume mount paths (`/config`, `/source`, `/outputs`) correspond to the default values of `--config-dir`, `--repo-path`, and `--output-dir`. If you override these arguments with custom paths, adjust your volume mounts accordingly.
 
 **Note**: Use the `:z` flag for systems with SELinux enabled (RHEL/Fedora/CentOS). On other systems, you can omit it.
 
@@ -315,7 +376,7 @@ If you already have the source code locally, use the `--use-local` flag and moun
 podman run --rm -it \
   --device /dev/fuse \
   -v ./config:/config:z \
-  -v /path/to/existing-workspace:/workspace:z \
+  -v /path/to/existing-source-code:/source:z \
   -v ./outputs:/outputs:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path path/to/workspace \
@@ -354,7 +415,7 @@ The `examples` directory contains ready-to-use configuration examples demonstrat
 | Example | Description | Details |
 |---------|-------------|---------|
 | **TODO** | Basic workspace with custom scalprum-config | [View README](./examples/example-config-todo/) |
-| **GitLab** | Overlays for non-BCP workspace format | [View README](./examples/example-config-gitlab/) |
+| **GitLab** | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/) |
 | **AWS ECS** | Patches and embed packages in plugins-list.yaml | [View README](./examples/example-config-aws-ecs/) |
 
 ### Quick Example: TODO Workspace
@@ -373,7 +434,7 @@ podman run --rm -it \
 This example includes:
 
 - Custom `scalprum-config.json` configuration
-- Standard Backstage Community Plugins (BCP) workspace format
+- A source repository using the standard Backstage Community Plugins workspace format
 - Both frontend and backend plugins in the workspace
 
 For detailed instructions, package verification steps, and additional examples, see the individual README files linked in the table above.

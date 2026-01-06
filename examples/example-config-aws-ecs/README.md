@@ -122,13 +122,13 @@ From the repository root, run:
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./examples/example-config-aws-ecs \
   --workspace-path . \
-  --repo-path ./workspace \
+  --repo-path ./source \
   --output-dir ./outputs
 ```
 
 This will do the following:
 
-1. The factory clones the AWS plugins repository to `./workspace`
+1. The factory clones the AWS plugins repository to `./source`
 2. The `1-avoid-double-wildcards.patch` is applied to fix workspace configuration
 3. Dependencies are installed at the repository root
 4. Frontend and backend ECS plugins are compiled
@@ -138,7 +138,7 @@ This will do the following:
 
 ## Expected Output
 
-After successful execution, you'll find these files in `./outputs/`:
+After successful execution, you'll find these files in `./outputs`:
 
 ```bash
 outputs/

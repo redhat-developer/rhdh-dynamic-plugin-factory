@@ -67,14 +67,14 @@ From the repository root, run:
 ```bash
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./examples/example-config-todo \
-  --repo-path ./workspace \
+  --repo-path ./source \
   --workspace-path workspaces/todo \
   --output-dir ./outputs
 ```
 
 This will do the following:
 
-1. The factory clones the Backstage Community Plugins repository to `./workspace`
+1. The factory clones the Backstage Community Plugins repository to `./source`
 2. The custom `scalprum-config.json` is overlaid on top of the plugin source directory
 3. Dependencies are installed in the TODO workspace
 4. Both frontend and backend plugins are exported and packaged using the RHDH CLI with the arguments defined in `./config/plugins-list.yaml` which in this case is no additional arguments
@@ -82,7 +82,7 @@ This will do the following:
 
 ## Expected Output
 
-After successful execution, you'll find these files in `./outputs/`:
+After successful execution, you'll find these files in `./outputs`:
 
 ```bash
 outputs/
