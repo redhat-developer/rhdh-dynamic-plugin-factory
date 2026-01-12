@@ -38,6 +38,11 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
     - [Container Images](#container-images)
   - [Examples](#examples)
     - [Quick Example: TODO Workspace](#quick-example-todo-workspace)
+  - [Troubleshooting \& Common Issues](#troubleshooting--common-issues)
+    - [Frontend Plugin Not Loading](#frontend-plugin-not-loading)
+    - [Backend Module Not Loading (Missing Dependencies)](#backend-module-not-loading-missing-dependencies)
+    - [Skopeo Fails During Plugin Installation](#skopeo-fails-during-plugin-installation)
+    - [Quay.io Repository Publishing Issues](#quayio-repository-publishing-issues)
   - [Local Development \& Contributing](#local-development--contributing)
   - [Resources](#resources)
 
@@ -368,6 +373,12 @@ podman run --rm -it \
 
 The factory will automatically read the load the environmental variables from `./config/.env`.
 
+**Important**: If the destination repository is a `quay.io` repository and does not exist, the factory will attempt to create a private repository. This may lead to issues described [below](#quayio-repository-publishing-issues). If you are having issues, please create the repositories before running the factory.
+
+If you do need to manually create the quay repository, the expected naming scheme for the repository is `quay.io/${REGISTRY_NAMESPACE}/${REPO_NAME}` where `${REPO_NAME}` is the `name` field of the `package.json` for the plugin except with `@` removed and instances of `/` replaced with `-`.
+
+Ex: `@red-hat-developer-hub/backstage-plugin-quickstart` -> `red-hat-developer-hub-backstage-plugin-quickstart`
+
 #### Using a local repository (skip cloning)
 
 If you already have the source code locally, use the `--use-local` flag and mount your existing workspace:
@@ -438,6 +449,73 @@ This example includes:
 - Both frontend and backend plugins in the workspace
 
 For detailed instructions, package verification steps, and additional examples, see the individual README files linked in the table above.
+
+## Troubleshooting & Common Issues
+
+This section covers common issues encountered when building, publishing, and installing dynamic plugins generated with the factory.
+
+### Frontend Plugin Not Loading
+
+When dynamically installing frontend plugins, they may fail to load or display incorrectly in RHDH.
+
+To begin debugging, open your browser's developer console (F12) and check for loading errors. These errors are typically informative and indicate the root cause.
+
+**Example Error:**
+
+```text
+Plugin backstage-community.plugin-entity-feedback is not configured properly: PluginRoot.default not found, ignoring mountPoint: "entity.page.feedback/cards"
+```
+
+In most cases, the issue arise from missing or incorrect plugin configuration for the frontend wiring for the plugin.
+
+To fix this, ensure all required mount points, routes, and bindings are correctly defined. Refer to the [RHDH frontend wiring documentation](https://github.com/redhat-developer/rhdh/blob/main/docs/dynamic-plugins/frontend-plugin-wiring.md) for more details on how to do this.
+
+### Backend Module Not Loading (Missing Dependencies)
+
+When dynamically installing backend plugins, they may fail to load due to a `MODULE_NOT_FOUND` error.
+
+**Example Error:**
+
+```text
+backstage error an error occurred while loading dynamic backend plugin '@internal/backstage-plugin-catalog-backend-module-github-org-transformer-dynamic' from 'file:///opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer' Cannot find module '@backstage/plugin-catalog-backend-module-github'
+Require stack:
+- /opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer/dist/module.cjs.js
+- /opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer/dist/index.cjs.js
+  code="MODULE_NOT_FOUND" requireStack=["/opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer ...
+```
+
+This indicates the backend plugin has dependencies that were not bundled in the dynamic plugin package when exporting with the factory.
+
+To solve this, embed the missing dependency/dependencies using the `--embed-package` flag in your `plugins-list.yaml`:
+
+```yaml
+plugins/my-backend-plugin: --embed-package @backstage/plugin-catalog-backend-module-github --embed-package <any-other-required-modules>
+```
+
+**Note:** By default, the `rhdh-cli` only embeds `-common` and `-node` packages from your backend plugin's dependencies. Any non-`@backstage` dependencies not included in your RHDH instance must be explicitly embedded.
+
+**Note:** The `MODULE_NOT_FOUND` error is thrown for the first missing module. It might not be the only missing module, so be sure to verify all the relevant private dependencies are embedded during the export.
+
+### Skopeo Fails During Plugin Installation
+
+During plugin installation via helm chart or operator, it may fail with a Skopeo error such as:
+
+```text
+subprocess.CalledProcessError: Command '['/usr/bin/skopeo', 'inspect', '--raw', 'docker://quay.io/my-test-organization/red-hat-developer-hub-backstage-plugin-scaffolder-backend-module-orchestrator:1.3.1']' returned non-zero exit status 1
+```
+
+The main cause of this issue are:
+
+1. The repository is private and authentication is not configured, in which case you should set it to public or configure the proper authentication to pull from the repository.
+2. The repository does not exist (see [Quay.io Repository Publishing Issues](#quayio-repository-publishing-issues) below), if so, you may need to manually create the repository and rebuild/publish with the factory (see [Build and Push to Registry](#build-and-push-to-registry) for the expected repository naming scheme)
+
+### Quay.io Repository Publishing Issues
+
+The factory logs may indicate successful image publication, but the image does not appear in your Quay.io repository.
+
+This may be due to Quay.io silently failing to publish images since your account has reached its private repository quota limit. When pushing to a non-existent repository, Quay.io automatically creates a private repository. If your account or organization has exhausted its private repository allocation, the creation may silently fails.
+
+To mitigate this, you may need to pre-create the repositories on `quay.io` before publishing to avoid having the factory attempt to create the repositories. Alternatively, you can upgrade your `quay.io` plan to increase the private repository allocation.
 
 ## Local Development & Contributing
 
