@@ -9,6 +9,8 @@ import pytest
 from unittest.mock import MagicMock
 from dotenv import dotenv_values
 
+from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+
 
 @pytest.fixture
 def mock_logger():
@@ -114,7 +116,7 @@ def temp_workspace(tmp_path: Path):
 
 
 @pytest.fixture
-def setup_test_env(tmp_path: Path):
+def setup_test_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
     Set up a complete test environment with all required files and environment variables.
     
@@ -142,6 +144,10 @@ plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common
 """
     (config_dir / "plugins-list.yaml").write_text(plugins_content)
     
+    # Set common environment variables
+    monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+    monkeypatch.setenv("WORKSPACE_PATH", ".")
+    
     return {
         "config_dir": str(config_dir),
         "source_dir": str(source_dir),
@@ -168,4 +174,25 @@ def clean_env(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv(var, raising=False)
     
     return monkeypatch
+
+
+@pytest.fixture
+def make_config(setup_test_env):
+    """Factory fixture to create PluginFactoryConfig with sensible defaults.
+    
+    Usage:
+        config = make_config()  # All defaults
+        config = make_config(registry_url="quay.io")  # With override
+        config = make_config(registry_url=None)  # Explicitly set to None
+    """
+    def _make_config(**overrides):
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["source_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = "."
+        for key, value in overrides.items():
+            setattr(config, key, value)
+        return config
+    return _make_config
 

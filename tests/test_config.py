@@ -295,87 +295,46 @@ class TestPluginFactoryConfigLoadFromEnv:
 class TestLoadRegistryConfig:
     """Tests for PluginFactoryConfig.load_registry_config method."""
     
-    def test_skip_when_push_images_false(self, setup_test_env, monkeypatch):
+    def test_skip_when_push_images_false(self, make_config):
         """Test that registry configuration is skipped when push_images is False."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create a minimal config without registry settings
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        
-        # Mock the logger to verify log messages
         with patch.object(config, 'logger') as mock_logger:
             config.load_registry_config(push_images=False)
-            
-            # Verify info log was called with skip message
             mock_logger.info.assert_called_once_with(
                 "Skipping registry configuration (not pushing images)"
             )
     
-    def test_missing_registry_url(self, setup_test_env, monkeypatch):
+    def test_missing_registry_url(self, make_config):
         """Test that missing REGISTRY_URL raises ValueError when push_images is True."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        
-        # Create config without registry_url but with namespace
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = None
-        config.registry_namespace = "test-namespace"
+        config = make_config(registry_url=None, registry_namespace="test-namespace")
         
         with pytest.raises(ValueError, match="REGISTRY_URL environment variable is required"):
             config.load_registry_config(push_images=True)
     
-    def test_missing_registry_namespace(self, setup_test_env, monkeypatch):
+    def test_missing_registry_namespace(self, make_config):
         """Test that missing REGISTRY_NAMESPACE raises ValueError when push_images is True."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        
-        # Create config with registry_url but without namespace
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = None
+        config = make_config(registry_url="quay.io", registry_namespace=None)
         
         with pytest.raises(ValueError, match="REGISTRY_NAMESPACE environment variable is required"):
             config.load_registry_config(push_images=True)
     
-    def test_successful_buildah_login(self, setup_test_env, monkeypatch):
+    def test_successful_buildah_login(self, make_config):
         """Test successful buildah login with valid credentials."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace",
+            registry_username="test-user",
+            registry_password="test-password",
+            registry_insecure=False
+        )
         
-        # Create config with full registry configuration
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        config.registry_username = "test-user"
-        config.registry_password = "test-password"
-        config.registry_insecure = False
-        
-        # Mock subprocess.run to simulate successful login
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             
-            # Mock the logger to verify log messages
             with patch.object(config, 'logger') as mock_logger:
                 config.load_registry_config(push_images=True)
                 
-                # Verify buildah command was called correctly
                 mock_run.assert_called_once()
                 call_args = mock_run.call_args
                 
@@ -390,29 +349,20 @@ class TestLoadRegistryConfig:
                 assert call_args[1]['stdout'] == subprocess.PIPE
                 assert call_args[1]['stderr'] == subprocess.PIPE
                 
-                # Verify success log message
                 mock_logger.info.assert_called_with(
                     "Logged in to registry quay.io with buildah."
                 )
     
-    def test_failed_buildah_login(self, setup_test_env, monkeypatch):
+    def test_failed_buildah_login(self, make_config):
         """Test that failed buildah login logs warning but doesn't raise."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace",
+            registry_username="test-user",
+            registry_password="wrong-password",
+            registry_insecure=False
+        )
         
-        # Create config with full registry configuration
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        config.registry_username = "test-user"
-        config.registry_password = "wrong-password"
-        config.registry_insecure = False
-        
-        # Mock subprocess.run to simulate failed login
         with patch('subprocess.run') as mock_run:
             mock_error = subprocess.CalledProcessError(
                 returncode=1,
@@ -421,101 +371,68 @@ class TestLoadRegistryConfig:
             )
             mock_run.side_effect = mock_error
             
-            # Mock the logger to verify warning message
             with patch.object(config, 'logger') as mock_logger:
-                # Should not raise, just log warning
                 config.load_registry_config(push_images=True)
                 
-                # Verify warning log message
                 mock_logger.warning.assert_called_once()
                 warning_call = mock_logger.warning.call_args[0][0]
                 assert "Failed to login to registry quay.io" in warning_call
                 assert "Authentication failed" in warning_call
     
-    def test_missing_registry_credentials(self, setup_test_env, monkeypatch):
+    def test_missing_registry_credentials(self, make_config):
         """Test that missing credentials raise ValueError when push_images is True."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        
-        # Create config without credentials
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        config.registry_username = None
-        config.registry_password = None
-        config.registry_insecure = False
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace",
+            registry_username=None,
+            registry_password=None,
+            registry_insecure=False
+        )
         
         with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
             config.load_registry_config(push_images=True)
     
-    def test_missing_registry_username(self, setup_test_env, monkeypatch):
+    def test_missing_registry_username(self, make_config):
         """Test that missing username raises ValueError when push_images is True."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        
-        # Create config without username
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        config.registry_username = None
-        config.registry_password = "test-password"
-        config.registry_insecure = False
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace",
+            registry_username=None,
+            registry_password="test-password",
+            registry_insecure=False
+        )
         
         with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
             config.load_registry_config(push_images=True)
     
-    def test_missing_registry_password(self, setup_test_env, monkeypatch):
+    def test_missing_registry_password(self, make_config):
         """Test that missing password raises ValueError when push_images is True."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        
-        # Create config without password
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        config.registry_username = "test-user"
-        config.registry_password = None
-        config.registry_insecure = False
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace",
+            registry_username="test-user",
+            registry_password=None,
+            registry_insecure=False
+        )
         
         with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
             config.load_registry_config(push_images=True)
     
-    def test_insecure_registry_flag(self, setup_test_env, monkeypatch):
+    def test_insecure_registry_flag(self, make_config):
         """Test that insecure flag is added to buildah command when registry_insecure is True."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="localhost:5000",
+            registry_namespace="test-namespace",
+            registry_username="test-user",
+            registry_password="test-password",
+            registry_insecure=True
+        )
         
-        # Create config with insecure registry
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "localhost:5000"
-        config.registry_namespace = "test-namespace"
-        config.registry_username = "test-user"
-        config.registry_password = "test-password"
-        config.registry_insecure = True
-        
-        # Mock subprocess.run to capture the command
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             
             config.load_registry_config(push_images=True)
             
-            # Verify buildah command includes --tls-verify=false
             mock_run.assert_called_once()
             call_args = mock_run.call_args
             
@@ -528,30 +445,21 @@ class TestLoadRegistryConfig:
             ]
             assert call_args[0][0] == expected_cmd
     
-    def test_secure_registry_default(self, setup_test_env, monkeypatch):
+    def test_secure_registry_default(self, make_config):
         """Test that insecure flag is NOT added when registry_insecure is False."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace",
+            registry_username="test-user",
+            registry_password="test-password",
+            registry_insecure=False
+        )
         
-        # Create config with secure registry (default)
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        config.registry_username = "test-user"
-        config.registry_password = "test-password"
-        config.registry_insecure = False
-        
-        # Mock subprocess.run to capture the command
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             
             config.load_registry_config(push_images=True)
             
-            # Verify buildah command does NOT include --tls-verify=false
             mock_run.assert_called_once()
             call_args = mock_run.call_args
             
@@ -562,44 +470,30 @@ class TestLoadRegistryConfig:
                 "quay.io"
             ]
             assert call_args[0][0] == expected_cmd
-            # Verify --tls-verify=false is NOT in the command
             assert "--tls-verify=false" not in call_args[0][0]
 
 
 class TestApplyPatchesAndOverlays:
     """Tests for PluginFactoryConfig.apply_patches_and_overlays method."""
     
-    def test_apply_patches_and_overlays_success(self, setup_test_env, monkeypatch):
+    def test_apply_patches_and_overlays_success(self, make_config):
         """Test successful execution of apply_patches_and_overlays."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        
-        # Mock the script path to exist
         script_dir = Path(__file__).parent.parent / "scripts"
         script_path = script_dir / "override-sources.sh"
         
-        # Mock run_command_with_streaming to return success
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
             with patch.object(Path, "exists", return_value=True):
                 mock_run_cmd.return_value = 0
                 
                 result = config.apply_patches_and_overlays()
                 
-                # Verify result
                 assert result is True
                 
-                # Verify run_command_with_streaming was called with correct arguments
                 mock_run_cmd.assert_called_once()
                 call_args = mock_run_cmd.call_args
                 
-                # Verify command structure
                 cmd = call_args[0][0]
                 assert len(cmd) == 3
                 assert cmd[0] == str(script_path.absolute())
@@ -607,53 +501,28 @@ class TestApplyPatchesAndOverlays:
                 expected_workspace = os.path.abspath(os.path.join(config.repo_path, config.workspace_path))
                 assert cmd[2] == expected_workspace
                 
-                # Verify logger was passed
                 assert call_args[0][1] == config.logger
-                
-                # Verify working directory
                 assert call_args[1]["cwd"] == Path(expected_workspace)
-                
-                # Verify stderr_log_func is set to logger.error
                 assert call_args[1]["stderr_log_func"] == config.logger.error
     
-    def test_apply_patches_and_overlays_script_not_found(self, setup_test_env, monkeypatch):
+    def test_apply_patches_and_overlays_script_not_found(self, make_config):
         """Test that apply_patches_and_overlays returns False when script doesn't exist."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        
-        # Mock script path to not exist
         with patch.object(Path, "exists", return_value=False):
             with patch.object(config, "logger") as mock_logger:
                 result = config.apply_patches_and_overlays()
                 
-                # Verify result
                 assert result is False
                 
-                # Verify error was logged
                 mock_logger.error.assert_called_once()
                 error_msg = mock_logger.error.call_args[0][0]
                 assert "Script not found" in error_msg
     
-    def test_apply_patches_and_overlays_script_fails(self, setup_test_env, monkeypatch):
+    def test_apply_patches_and_overlays_script_fails(self, make_config):
         """Test that apply_patches_and_overlays returns False when script returns non-zero exit code."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        
-        # Mock run_command_with_streaming to return failure
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
             with patch.object(Path, "exists", return_value=True):
                 with patch.object(config, "logger") as mock_logger:
@@ -661,26 +530,15 @@ class TestApplyPatchesAndOverlays:
                     
                     result = config.apply_patches_and_overlays()
                     
-                    # Verify result
                     assert result is False
                     
-                    # Verify error was logged with exit code
                     error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
                     assert any("exit code 1" in str(call) for call in error_calls)
     
-    def test_apply_patches_and_overlays_exception(self, setup_test_env, monkeypatch):
+    def test_apply_patches_and_overlays_exception(self, make_config):
         """Test that apply_patches_and_overlays handles exceptions gracefully."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        
-        # Mock run_command_with_streaming to raise an exception
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
             with patch.object(Path, "exists", return_value=True):
                 with patch.object(config, "logger") as mock_logger:
@@ -688,10 +546,8 @@ class TestApplyPatchesAndOverlays:
                     
                     result = config.apply_patches_and_overlays()
                     
-                    # Verify result
                     assert result is False
                     
-                    # Verify error was logged
                     mock_logger.error.assert_called()
                     error_msg = mock_logger.error.call_args[0][0]
                     assert "Failed to run patch script" in error_msg
@@ -701,75 +557,54 @@ class TestApplyPatchesAndOverlays:
 class TestExportPlugins:
     """Tests for PluginFactoryConfig.export_plugins method."""
     
-    def test_export_plugins_success(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_success(self, make_config, setup_test_env):
         """Test successful execution of export_plugins."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace"
+        )
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
                     with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
                         with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
                             mock_run_cmd.return_value = 0
-                            mock_display.return_value = False  # No failures
+                            mock_display.return_value = False
                             
                             result = config.export_plugins(output_dir, push_images=False)
                             
-                            # Verify result
                             assert result is True
                             
-                            # Verify run_command_with_streaming was called
                             mock_run_cmd.assert_called_once()
                             call_args = mock_run_cmd.call_args
                             
-                            # Verify command structure
                             cmd = call_args[0][0]
                             assert len(cmd) == 1
                             assert "export-workspace.sh" in cmd[0]
                             
-                            # Verify logger was passed
                             assert call_args[0][1] == config.logger
                             
-                            # Verify working directory
                             expected_workspace = os.path.abspath(os.path.join(config.repo_path, config.workspace_path))
                             assert call_args[1]["cwd"] == Path(expected_workspace)
                             
-                            # Verify env was passed
                             env = call_args[1]["env"]
                             assert "INPUTS_DESTINATION" in env
                             assert "INPUTS_PLUGINS_FILE" in env
                             assert "INPUTS_PUSH_CONTAINER_IMAGE" in env
     
-    def test_export_plugins_environment_variables_no_push(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_environment_variables_no_push(self, make_config, setup_test_env):
         """Test that environment variables are correctly set when push_images is False."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace"
+        )
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        
+        tmp_path = setup_test_env["tmp_path"]
         output_dir = str(tmp_path / "output")
         
-        # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -780,10 +615,8 @@ class TestExportPlugins:
                             
                             _result = config.export_plugins(output_dir, push_images=False)
                             
-                            # Get the env dict that was passed
                             env = mock_run_cmd.call_args[1]["env"]
                             
-                            # Verify required environment variables
                             assert env["INPUTS_SCALPRUM_CONFIG_FILE_NAME"] == "scalprum-config.json"
                             assert env["INPUTS_SOURCE_OVERLAY_FOLDER_NAME"] == "overlay"
                             assert env["INPUTS_SOURCE_PATCH_FILE_NAME"] == "patch"
@@ -796,23 +629,15 @@ class TestExportPlugins:
                             assert str((tmp_path / "output").absolute()) in env["INPUTS_DESTINATION"]
                             assert "plugins-list.yaml" in env["INPUTS_PLUGINS_FILE"]
     
-    def test_export_plugins_environment_variables_with_push(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_environment_variables_with_push(self, make_config, setup_test_env):
         """Test that environment variables are correctly set when push_images is True."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace"
+        )
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -823,29 +648,18 @@ class TestExportPlugins:
                             
                             _result = config.export_plugins(output_dir, push_images=True)
                             
-                            # Get the env dict that was passed
                             env = mock_run_cmd.call_args[1]["env"]
-                            
-                            # Verify INPUTS_PUSH_CONTAINER_IMAGE is set to "true"
                             assert env["INPUTS_PUSH_CONTAINER_IMAGE"] == "true"
     
-    def test_export_plugins_default_registry_values(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_default_registry_values(self, make_config, setup_test_env):
         """Test that default values are used when registry_url or registry_namespace are None."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url=None,
+            registry_namespace=None
+        )
         
-        # Create config without registry settings
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = None
-        config.registry_namespace = None
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock the script path and plugins list to exist
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -856,54 +670,31 @@ class TestExportPlugins:
                             
                             _result = config.export_plugins(output_dir, push_images=False)
                             
-                            # Get the env dict that was passed
                             env = mock_run_cmd.call_args[1]["env"]
-                            
-                            # Verify default values are used
                             assert env["INPUTS_IMAGE_REPOSITORY_PREFIX"] == "localhost/default"
     
-    def test_export_plugins_script_not_found(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_script_not_found(self, make_config, setup_test_env):
         """Test that export_plugins returns False when script doesn't exist."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock script path to not exist
         with patch.object(Path, "exists", return_value=False):
             with patch.object(config, "logger") as mock_logger:
                 result = config.export_plugins(output_dir, push_images=False)
                 
-                # Verify result
                 assert result is False
                 
-                # Verify error was logged
                 mock_logger.error.assert_called_once()
                 error_msg = mock_logger.error.call_args[0][0]
                 assert "Script not found" in error_msg
     
-    def test_export_plugins_no_plugins_list(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_no_plugins_list(self, make_config, setup_test_env):
         """Test that export_plugins returns False when plugins-list.yaml doesn't exist."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock: script exists but plugins-list.yaml doesn't
         original_path_exists = Path.exists
         
         def path_exists_side_effect(path_obj):
@@ -921,30 +712,20 @@ class TestExportPlugins:
                 with patch.object(config, "logger") as mock_logger:
                     result = config.export_plugins(output_dir, push_images=False)
                     
-                    # Verify result
                     assert result is False
                     
-                    # Verify error was logged
                     error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
                     assert any("No plugins file found" in str(call) for call in error_calls)
     
-    def test_export_plugins_script_fails(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_script_fails(self, make_config, setup_test_env):
         """Test that export_plugins returns False when script returns non-zero exit code."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace"
+        )
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock run_command_with_streaming to return failure
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -954,30 +735,20 @@ class TestExportPlugins:
                             
                             result = config.export_plugins(output_dir, push_images=False)
                             
-                            # Verify result
                             assert result is False
                             
-                            # Verify error was logged with exit code
                             error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
                             assert any("exit code 1" in str(call) for call in error_calls)
     
-    def test_export_plugins_has_failures(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_has_failures(self, make_config, setup_test_env):
         """Test that export_plugins returns False when display_export_results indicates failures."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace"
+        )
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock: script succeeds but display_export_results indicates failures
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -985,32 +756,21 @@ class TestExportPlugins:
                         with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
                             with patch.object(config, "logger") as mock_logger:
                                 mock_run_cmd.return_value = 0
-                                mock_display.return_value = True  # Has failures
+                                mock_display.return_value = True
                                 
                                 result = config.export_plugins(output_dir, push_images=False)
                                 
-                                # Verify result
                                 assert result is False
                                 
-                                # Verify error was logged
                                 error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
                                 assert any("completed with failures" in str(call) for call in error_calls)
     
-    def test_export_plugins_exception(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_exception(self, make_config, setup_test_env):
         """Test that export_plugins handles exceptions gracefully."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config()
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        output_dir = str(tmp_path / "output")
-        
-        # Mock run_command_with_streaming to raise an exception
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -1020,36 +780,25 @@ class TestExportPlugins:
                             
                             result = config.export_plugins(output_dir, push_images=False)
                             
-                            # Verify result
                             assert result is False
                             
-                            # Verify error was logged
                             mock_logger.error.assert_called()
                             error_msg = mock_logger.error.call_args[0][0]
                             assert "Failed to run export script" in error_msg
                             assert "Test exception" in error_msg
     
-    def test_export_plugins_custom_env_file(self, setup_test_env, monkeypatch, tmp_path):
+    def test_export_plugins_custom_env_file(self, make_config, setup_test_env):
         """Test that export_plugins loads custom .env file from config directory."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
+        config = make_config(
+            registry_url="quay.io",
+            registry_namespace="test-namespace"
+        )
         
-        # Create config
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        config.registry_url = "quay.io"
-        config.registry_namespace = "test-namespace"
-        
-        # Create a custom .env file in config directory
         custom_env = Path(setup_test_env["config_dir"]) / ".env"
         custom_env.write_text("CUSTOM_VAR=custom_value\n")
         
-        output_dir = str(tmp_path / "output")
+        output_dir = str(setup_test_env["tmp_path"] / "output")
         
-        # Track load_dotenv calls
         with patch.object(Path, "exists", return_value=True):
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
@@ -1061,10 +810,8 @@ class TestExportPlugins:
                                 
                                 _result = config.export_plugins(output_dir, push_images=False)
                                 
-                                # Verify load_dotenv was called
                                 assert mock_load_dotenv.call_count >= 1
                                 
-                                # Verify debug log about loading custom env
                                 debug_calls = [call[0][0] for call in mock_logger.debug.call_args_list]
                                 assert any(".env" in str(call) for call in debug_calls)
 
