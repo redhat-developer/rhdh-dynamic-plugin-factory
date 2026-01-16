@@ -4,8 +4,6 @@ Unit tests for PluginListConfig class.
 Tests the plugin list configuration loading and management.
 """
 
-from pathlib import Path
-
 import yaml
 import pytest
 

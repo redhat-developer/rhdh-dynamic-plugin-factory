@@ -428,7 +428,7 @@ class SourceConfig:
             self.logger.error(f"[red]Destination directory does not exist: {repo_path}[/red]")
             return True
         
-        self.logger.info(f"[bold blue]Cloning repository[/bold blue]")
+        self.logger.info("[bold blue]Cloning repository[/bold blue]")
         self.logger.info(f"Repository: {self.repo}")
         self.logger.info(f"Reference: {self.repo_ref}")
         self.logger.info(f"Destination directory: {repo_path}")

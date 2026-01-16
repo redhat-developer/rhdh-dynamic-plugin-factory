@@ -249,13 +249,6 @@ EOF
 - Align multi-line comments for readability
 - Use consistent comment block formatting
 
-## pdoc Documentation Rules
-- Use `pdoc` for API documentation generation from Python source
-- **Strictly use Google Style Docstrings** for all code elements
-- Document public variables using PEP 224 docstrings or `#:` doc-comments
-- Generated documentation located in `docs/sidekick/`
-- Target audience: developers and LLMs
-
 ## Google Style Docstring Format
 ```python
 def function_name(param1: str, param2: int) -> bool:
