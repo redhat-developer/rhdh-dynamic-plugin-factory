@@ -7,6 +7,9 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
 - [RHDH Dynamic Plugin Factory](#rhdh-dynamic-plugin-factory)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
+  - [Key Terminology](#key-terminology)
+    - [Backstage Workspace Structure](#backstage-workspace-structure)
+    - [`--workspace-path` vs `--repo-path`](#--workspace-path-vs---repo-path)
   - [Installation](#installation)
     - [Using Pre-built Container Images](#using-pre-built-container-images)
     - [Container Requirements](#container-requirements)
@@ -35,6 +38,11 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
     - [Container Images](#container-images)
   - [Examples](#examples)
     - [Quick Example: TODO Workspace](#quick-example-todo-workspace)
+  - [Troubleshooting \& Common Issues](#troubleshooting--common-issues)
+    - [Frontend Plugin Not Loading](#frontend-plugin-not-loading)
+    - [Backend Module Not Loading (Missing Dependencies)](#backend-module-not-loading-missing-dependencies)
+    - [Skopeo Fails During Plugin Installation](#skopeo-fails-during-plugin-installation)
+    - [Quay.io Repository Publishing Issues](#quayio-repository-publishing-issues)
   - [Local Development \& Contributing](#local-development--contributing)
   - [Resources](#resources)
 
@@ -47,6 +55,48 @@ The RHDH Plugin Factory automates the process of converting Backstage plugins in
 - **Dependency Management**: Automated yarn installation with TypeScript compilation
 - **Dynamic Plugin Packaging**: Build, export and package plugins using the RHDH CLI
 - **Container Image Publishing**: Optionally push to container registries (Quay, OpenShift, etc.)
+
+## Key Terminology
+
+A backstage plugin workspace is a [yarn workspace](https://yarnpkg.com/features/workspaces) within a Backstage repository that contains plugins to export. Note that there are cases where the backstage repository itself is the plugin workspace.
+
+### Backstage Workspace Structure
+
+A Backstage plugin workspace is a yarn workspace (either a root workspace or nested within a monorepo) that typically follows this structure:
+
+```text
+<backstage-workspace>/
+├── package.json          # Workspace root package.json (defines the yarn workspace)
+├── plugins/              # Contains the plugins to export as dynamic plugins
+│   ├── my-plugin/
+│   └── my-plugin-backend/
+└── packages/             # Optional: Contains frontend/backend apps for local development
+    ├── app/              # (Usually unused for dynamic plugin export)
+    └── backend/
+```
+
+Examples:
+
+- In the [Backstage Community Plugins](https://github.com/backstage/community-plugins) repository, each directory under `workspaces/` is a Backstage workspace (e.g., `workspaces/todo`, `workspaces/announcements`)
+- A standalone Backstage repository may have its workspace be the repository itself such as in the case of the [PagerDuty plugins](https://github.com/PagerDuty/backstage-plugins)
+
+### `--workspace-path` vs `--repo-path`
+
+These two options work together to locate your plugin workspace:
+
+- `--repo-path`: Where the backstage repository containing the plugin workspace is located (the cloned repository destination or your local repo)
+  - Note: this is automatically resolved to `/source` if not provided
+  - *Most* of the time this is NOT the same as the plugin workspace containing the plugins you want to export, the exception is when the backstage plugin repository itself is a standalone plugin workspace.
+- `--workspace-path`: The relative path from the repository root to the workspace containing your plugins
+
+Ex: To build plugins from the TODO workspace in the community-plugins repository:
+
+```text
+--repo-path /source                       # Repository cloned to the /source directory
+--workspace-path workspaces/todo          # Workspace is at /source/workspaces/todo
+```
+
+The factory will then search for plugins defined in the `plugins-list.yaml` file with respect to the workspace `<repo-path>/<workspace-path>/`
 
 ## Installation
 
@@ -70,7 +120,7 @@ podman pull quay.io/rhdh-community/dynamic-plugins-factory:1.8
 
 The container requires specific capabilities and device access for building dynamic plugins:
 
-- **Volume Mounts**: Mount your configuration, workspace, and/or output directories to the `/config`, `/workspace` and `/outputs` directories respectively
+- **Volume Mounts**: Mount your configuration, plugin repository, and/or output directory to the `/config`, `/source` and `/outputs` directories respectively
 - **Device Access**: Mount `/dev/fuse` for filesystem operations (required for buildah)
 - **SELinux Context**: Use `:z` flag for volume mounts on SELinux-enabled systems (RHEL/Fedora/CentOS)
 
@@ -82,13 +132,13 @@ The `--device /dev/fuse` flag passes the FUSE device from the Linux environment 
 podman run --rm -it \
   --device /dev/fuse \
   -v ./config:/config:z \
-  -v ./workspace:/workspace:z \
+  -v ./source:/source:z \
   -v ./outputs:/outputs:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path <path-to-workspace>
 ```
 
-**Note:** The `--config-dir`, `--repo-path`, and `--output-dir` options use default values of `/config`, `/workspace`, and `/outputs` respectively, which map to your local directories through volume mounts.
+**Note:** The `--config-dir`, `--repo-path`, and `--output-dir` options use default values of `/config`, `/source`, and `/outputs` respectively, which map to your local directories through volume mounts.
 
 ### Running Locally Without Containers
 
@@ -103,14 +153,16 @@ The factory expects the following directory structure:
 ```bash
 ./
 ├── config/                                   # Configuration directory (Can be set with --config-dir)
-│   ├── .env                                  # Optional: Override environment variables
+│   ├── .env                                  # Optional (if not pushing): Override environment variables + provide registry credentials
 │   ├── source.json                           # Source repository configuration
 │   ├── plugins-list.yaml                     # List of plugins to build
 │   ├── patches/                              # Optional: Patch files to apply
 │   └── <path-to-plugin-in-workspace>/overlays/   # Optional: Files to overlay on plugin source
-├── workspace/                                # Source code location (Can be set with --repo-path)
+├── source/                                   # Source code location (Can be set with --repo-path)
 └── outputs/                                  # Build output directory (Can be set with --output-dir)
 ```
+
+Note: `source/` in this case refers to the default source code location if not provided by `--repo-path` and is not to be mistaken with the workspace containing the plugins to export. Refer to [Key Terminology](#--workspace-path-vs---repo-path) for more details.
 
 ### Configuration Files
 
@@ -182,6 +234,20 @@ WORKSPACE_PATH=<path_to_workspace_with_respect_to_plugin_repo_root>
 
 `WORKSPACE_PATH` can be set in lieu of the `--workspace-path` argument
 
+Alternatively,  you can pass the `.env` file directly through podman using the `--env-file` argument instead of placing a `.env` file in the config directory:
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  --env-file ./my-env-file.env \
+  -v ./config:/config:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --workspace-path workspaces/todo \
+  --push-images
+```
+
+This approach keeps your credentials separate from the config directory and can be useful for CI/CD pipelines or when you want to reuse the same environment file across different configurations.
+
 ### Patches and Overlays
 
 > WARNING: This is a destructive operation
@@ -226,7 +292,7 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--config-dir` | `/config` | Configuration directory containing `source.json`, `plugins-list.yaml`, patches, and overlays |
-| `--repo-path` | `/workspace` | Path where plugin source code will be cloned/stored |
+| `--repo-path` | `/source` | Path where plugin source code will be cloned/stored |
 | `--workspace-path` | (required) | Path to the workspace from repository root (e.g., `workspaces/todo`) |
 | `--output-dir` | `/outputs` | Directory for build artifacts (`.tgz` files and container images) |
 | `--push-images` / `--no-push-images` | `--no-push-images` | Whether to push container images to registry. Defaults to not pushing if no argument is provided |
@@ -241,10 +307,10 @@ When using the container, you can mount directories based on your needs:
 | Volume Mount | Required? | Purpose | When to Use |
 |--------------|-----------|---------|-------------|
 | `-v ./config:/config:z` | **Required** | Configuration files | Always - contains your `plugins-list.yaml`, `source.json`, patches, and overlays |
-| `-v ./workspace:/workspace:z` | Optional | Source code location | Only if using `--use-local` OR if you want to preserve/inspect the cloned/patched remote repository |
-| `-v ./outputs:/outputs:z` | Optional | Build artifacts | Only if you want the output `.tgz` files saved locally (otherwise they stay in the container) |
+| `-v ./source:/source:z` | Optional | Source code location | Only if using `--use-local` OR if you want to preserve/inspect the cloned/patched remote repository |
+| `-v ./outputs:/outputs:z` | Optional | Stores bBuild artifacts | Only if you want the output `.tgz` files saved locally (otherwise they stay in the container) |
 
-**Important**: These volume mount paths (`/config`, `/workspace`, `/outputs`) correspond to the default values of `--config-dir`, `--repo-path`, and `--output-dir`. If you override these arguments with custom paths, adjust your volume mounts accordingly.
+**Important**: These volume mount paths (`/config`, `/source`, `/outputs`) correspond to the default values of `--config-dir`, `--repo-path`, and `--output-dir`. If you override these arguments with custom paths, adjust your volume mounts accordingly.
 
 **Note**: Use the `:z` flag for systems with SELinux enabled (RHEL/Fedora/CentOS). On other systems, you can omit it.
 
@@ -307,6 +373,12 @@ podman run --rm -it \
 
 The factory will automatically read the load the environmental variables from `./config/.env`.
 
+**Important**: If the destination repository is a `quay.io` repository and does not exist, the factory will attempt to create a private repository. This may lead to issues described [below](#quayio-repository-publishing-issues). If you are having issues, please create the repositories before running the factory.
+
+If you do need to manually create the quay repository, the expected naming scheme for the repository is `quay.io/${REGISTRY_NAMESPACE}/${REPO_NAME}` where `${REPO_NAME}` is the `name` field of the `package.json` for the plugin except with `@` removed and instances of `/` replaced with `-`.
+
+Ex: `@red-hat-developer-hub/backstage-plugin-quickstart` -> `red-hat-developer-hub-backstage-plugin-quickstart`
+
 #### Using a local repository (skip cloning)
 
 If you already have the source code locally, use the `--use-local` flag and mount your existing workspace:
@@ -315,7 +387,7 @@ If you already have the source code locally, use the `--use-local` flag and moun
 podman run --rm -it \
   --device /dev/fuse \
   -v ./config:/config:z \
-  -v /path/to/existing-workspace:/workspace:z \
+  -v /path/to/existing-source-code:/source:z \
   -v ./outputs:/outputs:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path path/to/workspace \
@@ -354,7 +426,7 @@ The `examples` directory contains ready-to-use configuration examples demonstrat
 | Example | Description | Details |
 |---------|-------------|---------|
 | **TODO** | Basic workspace with custom scalprum-config | [View README](./examples/example-config-todo/) |
-| **GitLab** | Overlays for non-BCP workspace format | [View README](./examples/example-config-gitlab/) |
+| **GitLab** | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/) |
 | **AWS ECS** | Patches and embed packages in plugins-list.yaml | [View README](./examples/example-config-aws-ecs/) |
 
 ### Quick Example: TODO Workspace
@@ -373,10 +445,77 @@ podman run --rm -it \
 This example includes:
 
 - Custom `scalprum-config.json` configuration
-- Standard Backstage Community Plugins (BCP) workspace format
+- A source repository using the standard Backstage Community Plugins workspace format
 - Both frontend and backend plugins in the workspace
 
 For detailed instructions, package verification steps, and additional examples, see the individual README files linked in the table above.
+
+## Troubleshooting & Common Issues
+
+This section covers common issues encountered when building, publishing, and installing dynamic plugins generated with the factory.
+
+### Frontend Plugin Not Loading
+
+When dynamically installing frontend plugins, they may fail to load or display incorrectly in RHDH.
+
+To begin debugging, open your browser's developer console (F12) and check for loading errors. These errors are typically informative and indicate the root cause.
+
+**Example Error:**
+
+```text
+Plugin backstage-community.plugin-entity-feedback is not configured properly: PluginRoot.default not found, ignoring mountPoint: "entity.page.feedback/cards"
+```
+
+In most cases, the issue arise from missing or incorrect plugin configuration for the frontend wiring for the plugin.
+
+To fix this, ensure all required mount points, routes, and bindings are correctly defined. Refer to the [RHDH frontend wiring documentation](https://github.com/redhat-developer/rhdh/blob/main/docs/dynamic-plugins/frontend-plugin-wiring.md) for more details on how to do this.
+
+### Backend Module Not Loading (Missing Dependencies)
+
+When dynamically installing backend plugins, they may fail to load due to a `MODULE_NOT_FOUND` error.
+
+**Example Error:**
+
+```text
+backstage error an error occurred while loading dynamic backend plugin '@internal/backstage-plugin-catalog-backend-module-github-org-transformer-dynamic' from 'file:///opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer' Cannot find module '@backstage/plugin-catalog-backend-module-github'
+Require stack:
+- /opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer/dist/module.cjs.js
+- /opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer/dist/index.cjs.js
+  code="MODULE_NOT_FOUND" requireStack=["/opt/app-root/src/dynamic-plugins-root/backstage-plugin-catalog-backend-module-github-org-transformer ...
+```
+
+This indicates the backend plugin has dependencies that were not bundled in the dynamic plugin package when exporting with the factory.
+
+To solve this, embed the missing dependency/dependencies using the `--embed-package` flag in your `plugins-list.yaml`:
+
+```yaml
+plugins/my-backend-plugin: --embed-package @backstage/plugin-catalog-backend-module-github --embed-package <any-other-required-modules>
+```
+
+**Note:** By default, the `rhdh-cli` only embeds `-common` and `-node` packages from your backend plugin's dependencies. Any non-`@backstage` dependencies not included in your RHDH instance must be explicitly embedded.
+
+**Note:** The `MODULE_NOT_FOUND` error is thrown for the first missing module. It might not be the only missing module, so be sure to verify all the relevant private dependencies are embedded during the export.
+
+### Skopeo Fails During Plugin Installation
+
+During plugin installation via helm chart or operator, it may fail with a Skopeo error such as:
+
+```text
+subprocess.CalledProcessError: Command '['/usr/bin/skopeo', 'inspect', '--raw', 'docker://quay.io/my-test-organization/red-hat-developer-hub-backstage-plugin-scaffolder-backend-module-orchestrator:1.3.1']' returned non-zero exit status 1
+```
+
+The main cause of this issue are:
+
+1. The repository is private and authentication is not configured, in which case you should set it to public or configure the proper authentication to pull from the repository.
+2. The repository does not exist (see [Quay.io Repository Publishing Issues](#quayio-repository-publishing-issues) below), if so, you may need to manually create the repository and rebuild/publish with the factory (see [Build and Push to Registry](#build-and-push-to-registry) for the expected repository naming scheme)
+
+### Quay.io Repository Publishing Issues
+
+The factory logs may indicate successful image publication, but the image does not appear in your Quay.io repository.
+
+This may be due to Quay.io silently failing to publish images since your account has reached its private repository quota limit. When pushing to a non-existent repository, Quay.io automatically creates a private repository. If your account or organization has exhausted its private repository allocation, the creation may silently fails.
+
+To mitigate this, you may need to pre-create the repositories on `quay.io` before publishing to avoid having the factory attempt to create the repositories. Alternatively, you can upgrade your `quay.io` plan to increase the private repository allocation.
 
 ## Local Development & Contributing
 

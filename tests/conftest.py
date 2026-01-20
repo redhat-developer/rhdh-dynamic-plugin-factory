@@ -9,6 +9,8 @@ import pytest
 from unittest.mock import MagicMock
 from dotenv import dotenv_values
 
+from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+
 
 @pytest.fixture
 def mock_logger():
@@ -22,12 +24,12 @@ def mock_args(tmp_path):
     """Create mock argparse.Namespace with default valid arguments."""
     args = argparse.Namespace(
         workspace_path=".",
-        config_dir=tmp_path / "config",
-        repo_path=tmp_path / "workspace",
+        config_dir=str(tmp_path / "config"),
+        repo_path=str(tmp_path / "workspace"),
         log_level="INFO",
         use_local=False,
         push_images=False,
-        output_dir=tmp_path / "outputs",
+        output_dir=str(tmp_path / "outputs"),
         verbose=False
     )
     return args
@@ -52,7 +54,7 @@ def valid_default_env(monkeypatch):
 
 
 @pytest.fixture
-def valid_source_json(tmp_path):
+def valid_source_json(tmp_path: Path):
     """Create a valid source.json file."""
     source_data = {
         "repo": "https://github.com/awslabs/backstage-plugins-for-aws",
@@ -71,7 +73,7 @@ def valid_source_json(tmp_path):
 
 
 @pytest.fixture
-def valid_plugins_list_yaml(tmp_path):
+def valid_plugins_list_yaml(tmp_path: Path):
     """Create a valid plugins-list.yaml file."""
     plugins_content = """plugins/ecs/frontend:
 plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common --embed-package @aws/aws-core-plugin-for-backstage-node
@@ -87,7 +89,7 @@ plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common -
 
 
 @pytest.fixture
-def temp_workspace(tmp_path):
+def temp_workspace(tmp_path: Path):
     """Create a temporary workspace directory with realistic structure."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -114,7 +116,7 @@ def temp_workspace(tmp_path):
 
 
 @pytest.fixture
-def setup_test_env(tmp_path, monkeypatch, valid_default_env):
+def setup_test_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
     Set up a complete test environment with all required files and environment variables.
     
@@ -124,8 +126,8 @@ def setup_test_env(tmp_path, monkeypatch, valid_default_env):
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir(parents=True, exist_ok=True)
+    source_dir = tmp_path / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
     
     # Create source.json
     source_data = {
@@ -142,16 +144,19 @@ plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common
 """
     (config_dir / "plugins-list.yaml").write_text(plugins_content)
     
-    # Return paths
+    # Set common environment variables
+    monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+    monkeypatch.setenv("WORKSPACE_PATH", ".")
+    
     return {
-        "config_dir": config_dir,
-        "workspace_dir": workspace_dir,
+        "config_dir": str(config_dir),
+        "source_dir": str(source_dir),
         "tmp_path": tmp_path
     }
 
 
 @pytest.fixture
-def clean_env(monkeypatch):
+def clean_env(monkeypatch: pytest.MonkeyPatch):
     """Clean environment fixture that removes all relevant environment variables."""
     # Remove all relevant environment variables
     env_vars = [
@@ -169,4 +174,25 @@ def clean_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     
     return monkeypatch
+
+
+@pytest.fixture
+def make_config(setup_test_env):
+    """Factory fixture to create PluginFactoryConfig with sensible defaults.
+    
+    Usage:
+        config = make_config()  # All defaults
+        config = make_config(registry_url="quay.io")  # With override
+        config = make_config(registry_url=None)  # Explicitly set to None
+    """
+    def _make_config(**overrides):
+        config = PluginFactoryConfig()
+        config.config_dir = setup_test_env["config_dir"]
+        config.repo_path = setup_test_env["source_dir"]
+        config.rhdh_cli_version = "1.7.2"
+        config.workspace_path = "."
+        for key, value in overrides.items():
+            setattr(config, key, value)
+        return config
+    return _make_config
 

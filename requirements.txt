@@ -1,4 +1,4 @@
-# Core dependencies
-pyyaml>=6.0
-python-dotenv>=1.0.0
-rich>=13.0.0
+# Core runtime dependencies
+PyYAML==6.0.3
+python-dotenv==1.1.1
+rich==14.1.0

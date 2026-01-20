@@ -51,7 +51,7 @@ The overlay directory structure mirrors the plugin's source structure. Files in 
 ### How Overlays Work
 
 1. The factory clones the source repository
-2. Before building, it copies files from `config/<plugin-path>/overlay/` to the corresponding paths in `workspace/<plugin-path>/`
+2. Before building, it copies files from `config/<plugin-path>/overlay/` to the corresponding paths in `<workspace-path>/<plugin-path>/`
 3. The overlaid files replace the original files completely if one exists, otherwise it will add the file
 4. The modified source is then built and exported
 
@@ -68,7 +68,7 @@ podman run --rm -it \
   --device /dev/fuse \
   -v ./examples/example-config-gitlab:/config:z \
   -v ./outputs:/outputs:z \
-  -f ./workspace:/workspace:z \
+  -f ./source:/source:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
   --workspace-path .
 ```
@@ -83,21 +83,22 @@ From the repository root, run:
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./examples/example-config-gitlab \
   --workspace-path . \
+  --repo-path ./source \
   --output-dir ./outputs
 ```
 
 This will do the following:
 
-1. The factory clones the GitLab plugin repository to `./workspace`
-2. Custom `bundle.ts` and `index.ts` files are copied to `./workspace/packages/gitlab-backend/src/`
-3. Dependencies are installed at the repository root
+1. The factory clones the GitLab plugin repository to `./source`
+2. Custom `bundle.ts` and `index.ts` files are copied to `./source/packages/gitlab-backend/src/`
+3. Dependencies are installed at the repository source
 4. Both frontend and backend plugins are compiled
 5. Plugins are exported as dynamic plugins using the RHDH CLI
 6. Plugin tarballs and integrity files are created in `./outputs`
 
 ## Expected Output
 
-After successful execution, you'll find these files in `./outputs/`:
+After successful execution, you'll find these files in `./outputs`:
 
 ```bash
 outputs/

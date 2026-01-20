@@ -3,8 +3,6 @@ Logging utilities for RHDH Plugin Factory.
 """
 
 import logging
-import sys
-from typing import Optional
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.traceback import install
@@ -25,10 +23,8 @@ def setup_logging(
         Configured logger instance
     """
     
-    # Install rich traceback handler
     install(show_locals=True)
     
-    # Get root logger
     logger = logging.getLogger("rhdh_dynamic_plugin_factory")
     logger.setLevel(getattr(logging, level.upper() if level.upper() in LEVELS else "INFO"))
     console = Console(stderr=True)
