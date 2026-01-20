@@ -1,0 +1,171 @@
+---
+description: Standards for writing integration tests for RHDH Dynamic Plugin Factory
+globs: tests/test_*.py, tests/e2e/*.py
+---
+# Integration & E2E Testing Standards
+
+## Definitions
+1.  **Component Integration Tests**: Verify interaction between Python components (Config, CLI, File System) using real file operations but mocked external heavy lifters (git, registry).
+2.  **Container E2E Tests**: Verify the end-to-end workflow by building the container image and running it against example configurations.
+
+## Markers
+- `@pytest.mark.integration`: For component integration tests.
+- `@pytest.mark.e2e`: For container-based end-to-end tests.
+
+Ensure `pytest.ini` includes these markers:
+```ini
+markers =
+    integration: Component integration tests
+    e2e: End-to-end container tests
+```
+
+## Component Integration Tests
+- **Location**: `tests/` (alongside unit tests or in `tests/integration/`).
+- **Principle**: Use `tmp_path` for all file I/O.
+- **Scope**: Test `cli.main()` or `PluginFactoryConfig` flows with realistic directory structures created by `setup_test_env`.
+
+### Using the Factory Fixture for Integration Tests
+The `make_config` factory fixture simplifies creating `PluginFactoryConfig` instances with overrides:
+
+```python
+@pytest.mark.integration
+def test_full_config_flow(self, make_config):
+    """Test a complete configuration workflow."""
+    config = make_config(
+        registry_url="quay.io",
+        registry_namespace="test-namespace",
+        registry_username="test-user",
+        registry_password="test-password"
+    )
+    # Config is fully set up with realistic directories
+    assert config.rhdh_cli_version == "1.7.2"
+    assert config.registry_url == "quay.io"
+```
+
+## Container E2E Tests
+
+> **Note:** E2E tests are not yet implemented. The `tests/e2e/` directory does not exist. The following guidance is for future implementation.
+
+- **Location**: `tests/e2e/`.
+- **Goal**: Validate that the container image works correctly with the provided `examples/`.
+- **Workflow**:
+    1.  **Get Image**: Use a pre-built image from the registry (CI) or build locally (development).
+    2.  **Run**: Execute the container mounting a `tmp_path` copy of an `examples/` directory.
+    3.  **Verify**: Check the output directory (mounted volume) for expected artifacts (e.g., `.tgz` files, `plugins-list.yaml`).
+
+### Image Source Strategy
+
+E2E tests support two modes controlled by environment variables:
+
+| Mode | Environment Variable | Use Case |
+|------|---------------------|----------|
+| **CI (default)** | `E2E_IMAGE` | Test against pre-built image from registry |
+| **Local build** | `E2E_BUILD_LOCAL=true` | Test Dockerfile changes before pushing |
+
+**Published Image Tags:**
+
+The container image is published to `quay.io/rhdh-community/dynamic-plugins-factory`:
+
+| Context | Tag Pattern | Example |
+|---------|-------------|---------|
+| Pull Requests | `pr-{number}-{short_sha}`. `pr-{number}` | `pr-123-abc1234`, `pr-123` |
+| Main branch | `{short_sha}` | `abc1234` |
+| Releases | `{version}-{release}`, `{version}`, `latest` | `1.8-0`, `1.8`, `latest` |
+
+### E2E Fixture Pattern
+
+```python
+import os
+import pytest
+import subprocess
+import shutil
+
+@pytest.fixture(scope="session")
+def factory_image():
+    """Get or build the factory image for E2E tests.
+    
+    Modes:
+    - CI (default): Uses E2E_IMAGE env var or falls back to latest
+    - Local: Set E2E_BUILD_LOCAL=true to build locally
+    
+    Returns:
+        str: The image tag to use for tests
+    """
+    if os.environ.get("E2E_BUILD_LOCAL") == "true":
+        # Local development: build image
+        tag = "rhdh-factory:local"
+        subprocess.run(["podman", "build", "-t", tag, "."], check=True)
+        return tag
+    
+    # CI/Default: use pre-built image
+    return os.environ.get(
+        "E2E_IMAGE",
+        "quay.io/rhdh-community/dynamic-plugins-factory:latest"
+    )
+
+@pytest.mark.e2e
+def test_example_config_aws_ecs(factory_image, tmp_path):
+    # Setup: Copy example to tmp_path
+    example_dir = tmp_path / "example"
+    shutil.copytree("examples/example-config-aws-ecs", example_dir)
+    
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    # Action: Run container
+    subprocess.run([
+        "podman", "run", "--rm",
+        "-v", f"{example_dir}:/config:z",
+        "-v", f"{output_dir}:/outputs:z",
+        factory_image
+    ], check=True)
+
+    # Assertion: Check outputs
+    assert (output_dir / "plugins-list.yaml").exists()
+```
+
+### Running E2E Tests
+
+```bash
+# Test against latest published image (default)
+pytest tests/e2e/ -m e2e
+
+# Test against specific version
+E2E_IMAGE=quay.io/rhdh-community/dynamic-plugins-factory:1.8-0 pytest tests/e2e/ -m e2e
+
+# Test against a PR image
+E2E_IMAGE=quay.io/rhdh-community/dynamic-plugins-factory:pr-123-abc1234 pytest tests/e2e/ -m e2e
+
+# Test with local build (for Dockerfile changes)
+E2E_BUILD_LOCAL=true pytest tests/e2e/ -m e2e
+```
+
+### CI Workflow Integration
+
+**For Pull Requests:**
+```yaml
+- name: Run E2E Tests
+  env:
+    E2E_IMAGE: quay.io/rhdh-community/dynamic-plugins-factory:pr-${{ github.event.number }}-${{ steps.prepare.outputs.short_sha }}
+  run: pytest tests/e2e/ -m e2e
+```
+
+**For Main Branch:**
+```yaml
+- name: Run E2E Tests
+  env:
+    E2E_IMAGE: quay.io/rhdh-community/dynamic-plugins-factory:${{ steps.prepare.outputs.short_sha }}
+  run: pytest tests/e2e/ -m e2e
+```
+
+## Available Fixtures for Integration Tests
+
+The following fixtures from `tests/conftest.py` are particularly useful for integration tests:
+
+| Fixture | Description |
+|---------|-------------|
+| `setup_test_env` | Complete test environment with `config/`, `source/` dirs, `source.json`, `plugins-list.yaml`, and env vars |
+| `make_config` | Factory fixture to create `PluginFactoryConfig` with sensible defaults and easy overrides |
+| `temp_workspace` | Temporary workspace directory with realistic plugin structure |
+| `valid_default_env` | Loads environment variables from the real `default.env` file |
+| `clean_env` | Pristine environment with all relevant env vars removed |

@@ -1,0 +1,91 @@
+---
+description: Standards and best practices for writing Pytest unit tests in this repository
+globs: tests/test_*.py
+---
+# Pytest Unit Testing Standards
+
+## General Principles
+- All unit tests must reside in the `tests/` directory.
+- Use **class-based grouping** for tests (e.g., `class TestClassName:`).
+- One test file per module (e.g., `test_config.py` for `config.py`).
+- Ensure **100% isolation**: No network calls, no real file system changes outside `tmp_path`, no system command execution.
+
+## Test Structure
+```python
+import pytest
+from unittest.mock import patch, MagicMock
+from src.rhdh_dynamic_plugin_factory.module import TargetClass
+
+class TestTargetClassMethod:
+    """Tests for TargetClass.method."""
+
+    def test_method_happy_path(self, mock_args, setup_test_env):
+        """Test description."""
+        # Setup
+        ...
+        # Action
+        ...
+        # Assertion
+        ...
+```
+
+## Fixture Usage
+Leverage existing fixtures in `tests/conftest.py` instead of recreating them:
+- `mock_logger`: Returns a MagicMock logger to suppress/verify logs.
+- `mock_args(tmp_path)`: Returns an `argparse.Namespace` with valid default CLI arguments.
+- `valid_default_env(monkeypatch)`: Loads environment variables from the real `default.env` file.
+- `valid_source_json(tmp_path)`: Creates and returns a valid `source.json` Path object.
+- `valid_plugins_list_yaml(tmp_path)`: Creates and returns a valid `plugins-list.yaml` Path object.
+- `temp_workspace(tmp_path)`: Creates a temporary workspace directory with realistic structure including sample plugin.
+- `setup_test_env(tmp_path, monkeypatch)`: Sets up a complete test environment with `config/` and `source/` directories, required files, and environment variables.
+- `clean_env(monkeypatch)`: Removes all relevant environment variables for a pristine environment.
+- `make_config(setup_test_env)`: **Factory fixture** to create `PluginFactoryConfig` instances with sensible defaults and easy overrides.
+
+## Mocking Standards
+- Use `unittest.mock.patch` for all external dependencies.
+- **Strictly mock** `subprocess.run`, `git` commands, and network requests.
+- Use `monkeypatch` (pytest fixture) for environment variables.
+
+### Example: Mocking Subprocess
+```python
+def test_subprocess_call(self, mock_args):
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        # ... call code ...
+        mock_run.assert_called_once()
+```
+
+## Environment Variables
+- Use the `monkeypatch` fixture to set environment variables.
+- Alternatively, use `clean_env` if you need a pristine environment.
+- Use `valid_default_env` to load the actual `default.env` file values.
+
+```python
+def test_env_var(self, monkeypatch):
+    monkeypatch.setenv("RHDH_CLI_VERSION", "1.0.0")
+    # ...
+```
+
+## Factory Fixture Pattern
+Use the `make_config` factory fixture for creating `PluginFactoryConfig` instances with easy overrides:
+
+```python
+def test_with_registry_config(self, make_config):
+    """Test using factory fixture with overrides."""
+    config = make_config(
+        registry_url="quay.io",
+        registry_namespace="test-namespace"
+    )
+    # config has all defaults plus the overrides
+    assert config.registry_url == "quay.io"
+```
+
+## Naming Conventions
+- Files: `test_<module_name>.py`
+- Classes: `Test<ClassName><MethodName>` (optional MethodName if grouping by method)
+- Functions: `test_<scenario_description>`
+
+## Current Test Files
+- `test_config.py`: Tests for `PluginFactoryConfig` class (load_from_env, load_registry_config, apply_patches_and_overlays, export_plugins)
+- `test_source_config.py`: Tests for `SourceConfig` class (from_file, clone_to_path)
+- `test_plugin_list_config.py`: Tests for `PluginListConfig` class (from_file, get_plugins, add_plugin, remove_plugin)
