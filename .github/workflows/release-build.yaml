@@ -178,54 +178,6 @@ jobs:
           release-number: ${{ steps.prepare.outputs.release }}
           tag-latest: ${{ steps.prepare.outputs.is_highest_version }}
 
-      - name: Generate image-info.json
-        if: steps.skip_check.outputs.should_skip != 'true'
-        id: image-info
-        env:
-          VERSION: ${{ steps.prepare.outputs.version }}
-          RELEASE: ${{ steps.prepare.outputs.release }}
-          SHORT_SHA: ${{ steps.build.outputs.short-sha }}
-          VERSION_RELEASE_TAG: ${{ steps.build.outputs.primary-tag }}
-          IS_HIGHEST: ${{ steps.prepare.outputs.is_highest_version }}
-        run: |
-          mkdir -p /tmp/image-info
-          
-          # Build all_tags array
-          if [[ "$IS_HIGHEST" == "true" ]]; then
-            ALL_TAGS="[\"${VERSION_RELEASE_TAG}\", \"${VERSION}\", \"${SHORT_SHA}\", \"latest\"]"
-          else
-            ALL_TAGS="[\"${VERSION_RELEASE_TAG}\", \"${VERSION}\", \"${SHORT_SHA}\"]"
-          fi
-          
-          cat > /tmp/image-info/image-info.json << EOF
-          {
-            "type": "release",
-            "version": "${VERSION}",
-            "release_number": "${RELEASE}",
-            "commit_sha": "${{ github.sha }}",
-            "short_sha": "${SHORT_SHA}",
-            "registry": "${{ env.REGISTRY }}",
-            "repository": "${{ env.REGISTRY_IMAGE }}",
-            "primary_tag": "${VERSION_RELEASE_TAG}",
-            "primary_image": "${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${VERSION_RELEASE_TAG}",
-            "all_tags": ${ALL_TAGS},
-            "is_latest": ${IS_HIGHEST},
-            "build_workflow_run_id": "${{ github.run_id }}",
-            "branch": "${{ github.ref_name }}"
-          }
-          EOF
-          
-          echo "Generated image-info.json:"
-          cat /tmp/image-info/image-info.json
-
-      - name: Upload image-info artifact
-        if: steps.skip_check.outputs.should_skip != 'true'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with: 
-          name: image-info
-          path: /tmp/image-info/image-info.json
-          retention-days: 7
-
       - name: Display Build Summary
         if: steps.skip_check.outputs.should_skip != 'true'
         env:
