@@ -59,6 +59,12 @@ outputs:
   artifact-name:
     description: 'Name of the uploaded artifact (when push is false)'
     value: ${{ steps.export.outputs.artifact_name }}
+  platform:
+    description: 'Platform that was built (when push is false)'
+    value: ${{ steps.export.outputs.platform }}
+  arch:
+    description: 'Architecture that was built (when push is false)'
+    value: ${{ steps.export.outputs.arch }}
 
 runs:
   using: 'composite'
@@ -191,6 +197,8 @@ runs:
       uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
       with:
         context: .
+        # When exporting as artifact, only single platform is supported
+        # Use the first platform from the input (caller should pass single platform)
         platforms: ${{ inputs.platforms }}
         push: false
         tags: ${{ steps.docker-tags.outputs.tags }}
@@ -207,13 +215,31 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         VERSION: ${{ inputs.version }}
         RELEASE_NUMBER: ${{ inputs.release-number }}
+        PLATFORMS: ${{ inputs.platforms }}
       run: |
+        # Validate platform format (must be os/arch, e.g., linux/amd64)
+        if ! [[ "$PLATFORMS" =~ ^[a-z]+/[a-z0-9]+$ ]]; then
+          echo "Error: Invalid platform format: $PLATFORMS"
+          echo "Expected format: os/arch (e.g., linux/amd64, linux/arm64)"
+          exit 1
+        fi
+        
+        # Extract architecture from platform (e.g., linux/amd64 -> amd64)
+        ARCH="${PLATFORMS#*/}"
+        
+        if ! [[ "$ARCH" =~ ^(amd64|arm64)$ ]]; then
+          echo "Error: Unsupported architecture: $ARCH"
+          exit 1
+        fi
+        
         if [[ -n "$PR_NUMBER" ]]; then
-          ARTIFACT_NAME="container-image-pr-${PR_NUMBER}"
+          ARTIFACT_NAME="container-image-pr-${PR_NUMBER}-${ARCH}"
         else
-          ARTIFACT_NAME="container-image-${VERSION}-${RELEASE_NUMBER}"
+          ARTIFACT_NAME="container-image-${VERSION}-${RELEASE_NUMBER}-${ARCH}"
         fi
         echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+        echo "platform=${PLATFORMS}" >> $GITHUB_OUTPUT
+        echo "arch=${ARCH}" >> $GITHUB_OUTPUT
 
     - name: Upload container artifact
       if: inputs.push != 'true'

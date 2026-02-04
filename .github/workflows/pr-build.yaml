@@ -15,8 +15,11 @@ env:
   REGISTRY_IMAGE: rhdh-community/dynamic-plugins-factory
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip_check.outputs.should_skip }}
+      skip_reason: ${{ steps.skip_check.outputs.skip_reason }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -37,8 +40,24 @@ jobs:
             ^\.cursor\/
             ^tests\/
 
+  build:
+    needs: check
+    if: needs.check.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Build container and export artifact
-        if: steps.skip_check.outputs.should_skip != 'true'
         id: build
         uses: ./.github/actions/build-container
         with:
@@ -47,19 +66,42 @@ jobs:
           image: ${{ env.REGISTRY_IMAGE }}
           pr-number: ${{ github.event.number }}
           commit-sha: ${{ github.sha }}
+          platforms: ${{ matrix.platform }}
 
+      - name: Build Summary
+        env:
+          PRIMARY_TAG: ${{ steps.build.outputs.primary-tag }}
+          SHORT_SHA: ${{ steps.build.outputs.short-sha }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ steps.build.outputs.arch }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          echo "## PR Container Build Summary (${PLATFORM})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Container image built and exported as artifact for PR #${PR_NUMBER}." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | \`${PLATFORM}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Primary Tag | \`${PRIMARY_TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${SHORT_SHA}\` |" >> $GITHUB_STEP_SUMMARY
+
+  metadata:
+    needs: [check, build]
+    if: needs.check.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
       - name: Save PR metadata
-        if: steps.skip_check.outputs.should_skip != 'true'
         env:
           PR_NUMBER: ${{ github.event.number }}
           COMMIT_SHA: ${{ github.sha }}
-          SHORT_SHA: ${{ steps.build.outputs.short-sha }}
-          PRIMARY_TAG: ${{ steps.build.outputs.primary-tag }}
-          ALL_TAGS: ${{ steps.build.outputs.all-tags }}
-          ARTIFACT_NAME: ${{ steps.build.outputs.artifact-name }}
         run: |
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          PRIMARY_TAG="pr-${PR_NUMBER}"
+          ALL_TAGS="${PRIMARY_TAG},pr-${PR_NUMBER}-${SHORT_SHA}"
+          
           mkdir -p /tmp/pr-metadata
-          # Convert comma-separated tags to JSON array
+          # Build JSON with proper array for all_tags
           ALL_TAGS_JSON=$(echo "${ALL_TAGS}" | tr ',' '\n' | jq -R . | jq -s .)
           cat > /tmp/pr-metadata/pr-info.json << EOF
           {
@@ -68,12 +110,14 @@ jobs:
             "short_sha": "${SHORT_SHA}",
             "primary_tag": "${PRIMARY_TAG}",
             "all_tags": ${ALL_TAGS_JSON},
-            "artifact_name": "${ARTIFACT_NAME}"
+            "platforms": ["linux/amd64", "linux/arm64"]
           }
           EOF
+          
+          echo "Generated PR metadata:"
+          cat /tmp/pr-metadata/pr-info.json
 
       - name: Upload PR metadata
-        if: steps.skip_check.outputs.should_skip != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: pr-metadata
@@ -81,44 +125,51 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Build Summary
-        if: steps.skip_check.outputs.should_skip != 'true'
+      - name: Final Summary
         env:
-          PRIMARY_TAG: ${{ steps.build.outputs.primary-tag }}
-          ALL_TAGS: ${{ steps.build.outputs.all-tags }}
-          SHORT_SHA: ${{ steps.build.outputs.short-sha }}
           PR_NUMBER: ${{ github.event.number }}
+          COMMIT_SHA: ${{ github.sha }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          echo "## PR Container Build Summary" >> $GITHUB_STEP_SUMMARY
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          
+          echo "## PR Container Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Container image built and exported as artifact for PR #${PR_NUMBER}." >> $GITHUB_STEP_SUMMARY
+          echo "Multi-platform container images built for PR #${PR_NUMBER}." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Platforms Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- \`linux/amd64\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`linux/arm64\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Tags" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Tag | Description |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|-------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| \`${PRIMARY_TAG}\` | Primary PR tag |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`pr-${PR_NUMBER}\` | Primary PR tag |" >> $GITHUB_STEP_SUMMARY
           echo "| \`pr-${PR_NUMBER}-${SHORT_SHA}\` | PR tag with commit SHA |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The [PR Publish](${{ github.server_url }}/${{ github.repository }}/actions/workflows/pr-publish.yaml) workflow will:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Download the built container artifact" >> $GITHUB_STEP_SUMMARY
-          echo "2. Push to \`${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "3. Add a comment to this PR with the image details" >> $GITHUB_STEP_SUMMARY
-
+  skipped:
+    needs: check
+    if: needs.check.outputs.should_skip == 'true'
+    runs-on: ubuntu-latest
+    steps:
       - name: Build Skipped Summary
-        if: steps.skip_check.outputs.should_skip == 'true'
+        env:
+          SKIP_REASON: ${{ needs.check.outputs.skip_reason }}
+          PR_NUMBER: ${{ github.event.number }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           echo "## PR Container Build Skipped" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Reason" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.skip_check.outputs.skip_reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "${SKIP_REASON}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Details" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **PR Number**: #${{ github.event.number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit SHA**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Number**: #${PR_NUMBER}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: \`${COMMIT_SHA}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "No container build was performed." >> $GITHUB_STEP_SUMMARY

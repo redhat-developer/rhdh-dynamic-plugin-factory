@@ -1,7 +1,7 @@
 # Publish PR container images after pr-build.yaml completes
 # This workflow runs in a privileged context with access to secrets.
-# It downloads the container artifact built by pr-build.yaml, pushes to registry,
-# and comments on the PR with image details.
+# It downloads the container artifacts built by pr-build.yaml, pushes to registry,
+# creates a multi-platform manifest, and comments on the PR with image details.
 name: PR Publish
 
 on:
@@ -50,7 +50,6 @@ jobs:
           PRIMARY_TAG=$(jq -r '.primary_tag' /tmp/pr-metadata/pr-info.json)
           # Convert JSON array to comma-separated string
           ALL_TAGS=$(jq -r '.all_tags | if type == "array" then join(",") else . end' /tmp/pr-metadata/pr-info.json)
-          ARTIFACT_NAME=$(jq -r '.artifact_name' /tmp/pr-metadata/pr-info.json)
           
           # Validate PR number is numeric (1-7 digits)
           if ! [[ "$PR_NUMBER" =~ ^[0-9]{1,7}$ ]]; then
@@ -82,28 +81,29 @@ jobs:
             exit 1
           fi
           
-          # Validate artifact name format
-          if ! [[ "$ARTIFACT_NAME" =~ ^container-image-pr-[0-9]{1,7}$ ]]; then
-            echo "Error: Invalid artifact name: $ARTIFACT_NAME"
-            exit 1
-          fi
-          
           echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
           echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "primary_tag=${PRIMARY_TAG}" >> $GITHUB_OUTPUT
           echo "all_tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
-          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
           
           echo "PR Number: $PR_NUMBER"
           echo "Commit SHA: $COMMIT_SHA"
           echo "Primary Tag: $PRIMARY_TAG"
 
-      - name: Download container artifact
+      - name: Download amd64 container artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: ${{ steps.pr-info.outputs.artifact_name }}
-          path: /tmp/container
+          name: container-image-pr-${{ steps.pr-info.outputs.pr_number }}-amd64
+          path: /tmp/container-amd64
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download arm64 container artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: container-image-pr-${{ steps.pr-info.outputs.pr_number }}-arm64
+          path: /tmp/container-arm64
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -118,7 +118,7 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_TOKEN }}
 
-      - name: Load and push image
+      - name: Load, push images and create manifest
         if: env.HAS_QUAY_AUTH == 'true'
         id: push
         env:
@@ -126,30 +126,51 @@ jobs:
           SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
           ALL_TAGS: ${{ steps.pr-info.outputs.all_tags }}
         run: |
-          echo "::group::Load container image from artifact"
-          docker load -i /tmp/container/container-image.tar
+          echo "::group::Load container images from artifacts"
+          docker load -i /tmp/container-amd64/container-image.tar
+          AMD64_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | head -1)
+          echo "Loaded amd64 image: $AMD64_IMAGE"
+          
+          docker load -i /tmp/container-arm64/container-image.tar
+          ARM64_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | head -1)
+          echo "Loaded arm64 image: $ARM64_IMAGE"
           echo "::endgroup::"
           
-          echo "::group::Tag and push images"
-          LOADED_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | head -1)
-          echo "Loaded image: $LOADED_IMAGE"
-          
-          # Tag and push each tag
+          echo "::group::Tag and push architecture-specific images"
+          # Push each architecture with arch-specific tags
           IFS=',' read -ra TAG_ARRAY <<< "$ALL_TAGS"
-          PUSHED_TAGS=""
+          
           for tag in "${TAG_ARRAY[@]}"; do
-            FULL_TAG="${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${tag}"
-            echo "Tagging and pushing: $FULL_TAG"
-            docker tag "$LOADED_IMAGE" "$FULL_TAG"
-            docker push "$FULL_TAG"
-            if [[ -n "$PUSHED_TAGS" ]]; then
-              PUSHED_TAGS="${PUSHED_TAGS},"
-            fi
-            PUSHED_TAGS="${PUSHED_TAGS}${tag}"
+            AMD64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-amd64"
+            ARM64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-arm64"
+            
+            echo "Tagging and pushing: $AMD64_TAG"
+            docker tag "$AMD64_IMAGE" "$AMD64_TAG"
+            docker push "$AMD64_TAG"
+            
+            echo "Tagging and pushing: $ARM64_TAG"
+            docker tag "$ARM64_IMAGE" "$ARM64_TAG"
+            docker push "$ARM64_TAG"
           done
           echo "::endgroup::"
           
-          echo "pushed_tags=${PUSHED_TAGS}" >> $GITHUB_OUTPUT
+          echo "::group::Create and push multi-platform manifests"
+          for tag in "${TAG_ARRAY[@]}"; do
+            MANIFEST_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}"
+            AMD64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-amd64"
+            ARM64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-arm64"
+            
+            echo "Creating manifest: $MANIFEST_TAG"
+            docker manifest create "$MANIFEST_TAG" \
+              --amend "$AMD64_TAG" \
+              --amend "$ARM64_TAG"
+            
+            echo "Pushing manifest: $MANIFEST_TAG"
+            docker manifest push "$MANIFEST_TAG"
+          done
+          echo "::endgroup::"
+          
+          echo "pushed_tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
 
       - name: Comment on PR
         if: env.HAS_QUAY_AUTH == 'true'
@@ -165,27 +186,35 @@ jobs:
             const shortSha = process.env.SHORT_SHA;
             const primaryTag = process.env.PRIMARY_TAG;
             const workflowRunId = process.env.WORKFLOW_RUN_ID;
-            const registry = '${{ env.REGISTRY }}';
-            const image = '${{ env.REGISTRY_IMAGE }}';
+            const registry = process.env.REGISTRY;
+            const image = process.env.REGISTRY_IMAGE;
             
             const prTag = `pr-${prNumber}`;
             const prShaTag = `pr-${prNumber}-${shortSha}`;
             
             const body = `## Container Image Published
             
-            | Tag | Image |
-            |-----|-------|
-            | \`${prTag}\` | \`${registry}/${image}:${prTag}\` |
-            | \`${prShaTag}\` | \`${registry}/${image}:${prShaTag}\` |
+            Multi-platform container images are now available.
+            
+            | Tag | Image | Platforms |
+            |-----|-------|-----------|
+            | \`${prTag}\` | \`${registry}/${image}:${prTag}\` | linux/amd64, linux/arm64 |
+            | \`${prShaTag}\` | \`${registry}/${image}:${prShaTag}\` | linux/amd64, linux/arm64 |
             
             **Expires:** 2 weeks from now
             
             ### Pull Commands
             
             \`\`\`bash
+            # Multi-platform (auto-selects correct arch)
             docker pull ${registry}/${image}:${prTag}
-            # or with specific commit
+            
+            # Or with specific commit
             docker pull ${registry}/${image}:${prShaTag}
+            
+            # Specific architecture
+            docker pull ${registry}/${image}:${prTag}-amd64
+            docker pull ${registry}/${image}:${prTag}-arm64
             \`\`\`
             
             ### Traceability
@@ -229,34 +258,41 @@ jobs:
           SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
           COMMIT_SHA: ${{ steps.pr-info.outputs.commit_sha }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           PR_TAG="pr-${PR_NUMBER}"
           PR_SHA_TAG="pr-${PR_NUMBER}-${SHORT_SHA}"
           
           echo "## PR Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| \`${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${PR_TAG}\` | ${PR_TAG} |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`${{ env.REGISTRY }}/${{ env.REGISTRY_IMAGE }}:${PR_SHA_TAG}\` | ${PR_SHA_TAG} |" >> $GITHUB_STEP_SUMMARY
+          echo "### Images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag | Platforms |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${PR_TAG}\` | ${PR_TAG} | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${PR_SHA_TAG}\` | ${PR_SHA_TAG} | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Expires:** 2 weeks" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Traceability" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Pull Request:** [#${PR_NUMBER}](${{ github.server_url }}/${{ github.repository }}/pull/${PR_NUMBER})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Triggered by:** [PR Build #${WORKFLOW_RUN_ID}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${WORKFLOW_RUN_ID})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pull Request:** [#${PR_NUMBER}](${SERVER_URL}/${REPOSITORY}/pull/${PR_NUMBER})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** [PR Build #${WORKFLOW_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID})" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
 
       - name: No Auth Summary
         if: env.HAS_QUAY_AUTH != 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
         run: |
           echo "## PR Image Publish Skipped" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Registry credentials not configured. Image was not pushed." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **PR Number**: #${{ steps.pr-info.outputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit SHA**: \`${{ steps.pr-info.outputs.short_sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Number**: #${PR_NUMBER}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
 
   # Handle failed upstream workflow
   notify-failure:
@@ -265,9 +301,13 @@ jobs:
     permissions: {}
     steps:
       - name: Failure Summary
+        env:
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           echo "## PR Build Failed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The upstream PR Build workflow failed. No image was published." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Failed workflow:** [PR Build #${{ github.event.workflow_run.id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failed workflow:** [PR Build #${WORKFLOW_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID})" >> $GITHUB_STEP_SUMMARY
