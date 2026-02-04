@@ -148,7 +148,19 @@ runs:
         REGISTRY: ${{ inputs.registry }}
         IMAGE: ${{ inputs.image }}
         ALL_TAGS: ${{ steps.tags.outputs.all_tags }}
+        PUSH: ${{ inputs.push }}
+        PLATFORMS: ${{ inputs.platforms }}
       run: |
+        ARCH=""
+        if [[ "$PUSH" != "true" ]]; then
+          if ! [[ "$PLATFORMS" =~ ^[a-z]+/[a-z0-9]+$ ]]; then
+            echo "Error: Invalid platform format: $PLATFORMS"
+            exit 1
+          fi
+          ARCH="${PLATFORMS#*/}"
+          echo "Export mode: adding architecture suffix '-${ARCH}' to tags"
+        fi
+        
         # Convert comma-separated tags to newline-separated full image references
         DOCKER_TAGS=""
         IFS=',' read -ra TAG_ARRAY <<< "$ALL_TAGS"
@@ -156,10 +168,13 @@ runs:
           if [[ -n "$DOCKER_TAGS" ]]; then
             DOCKER_TAGS="${DOCKER_TAGS}"$'\n'
           fi
-          DOCKER_TAGS="${DOCKER_TAGS}${REGISTRY}/${IMAGE}:${tag}"
+          if [[ -n "$ARCH" ]]; then
+            DOCKER_TAGS="${DOCKER_TAGS}${REGISTRY}/${IMAGE}:${tag}-${ARCH}"
+          else
+            DOCKER_TAGS="${DOCKER_TAGS}${REGISTRY}/${IMAGE}:${tag}"
+          fi
         done
         
-        # Use heredoc for multiline output
         {
           echo "tags<<EOF"
           echo "$DOCKER_TAGS"
@@ -173,7 +188,6 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         EXPIRATION: ${{ inputs.expiration }}
       run: |
-        # Add expiration label for PR builds
         if [[ -n "$PR_NUMBER" ]]; then
           echo "labels=quay.expires-after=${EXPIRATION}" >> $GITHUB_OUTPUT
         else
