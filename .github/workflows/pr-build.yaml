@@ -31,7 +31,7 @@ jobs:
         id: skip_check
         uses: ./.github/actions/should-skip-build
         with:
-          commit-sha: ${{ github.sha }}
+          commit-sha: ${{ github.event.pull_request.head.sha }}
           check-image: 'false'
           file-patterns: |
             \.md$
@@ -65,7 +65,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           image: ${{ env.REGISTRY_IMAGE }}
           pr-number: ${{ github.event.number }}
-          commit-sha: ${{ github.sha }}
+          commit-sha: ${{ github.event.pull_request.head.sha }}
           platforms: ${{ matrix.platform }}
 
       - name: Build Summary
@@ -94,7 +94,7 @@ jobs:
       - name: Save PR metadata
         env:
           PR_NUMBER: ${{ github.event.number }}
-          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           SHORT_SHA="${COMMIT_SHA:0:7}"
           PRIMARY_TAG="pr-${PR_NUMBER}"
@@ -128,7 +128,7 @@ jobs:
       - name: Final Summary
         env:
           PR_NUMBER: ${{ github.event.number }}
-          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -159,7 +159,7 @@ jobs:
         env:
           SKIP_REASON: ${{ needs.check.outputs.skip_reason }}
           PR_NUMBER: ${{ github.event.number }}
-          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           echo "## PR Container Build Skipped" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
