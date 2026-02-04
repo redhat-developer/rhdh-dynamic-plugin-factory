@@ -120,6 +120,7 @@ jobs:
       - name: Load, push images and create manifest
         if: env.HAS_QUAY_AUTH == 'true'
         id: push
+        continue-on-error: true
         env:
           PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
           SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
@@ -192,7 +193,7 @@ jobs:
           echo "pushed_tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
 
       - name: Clean up architecture-specific tags
-        if: env.HAS_QUAY_AUTH == 'true' && env.QUAY_OAUTH_TOKEN != ''
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome == 'success' && env.QUAY_OAUTH_TOKEN != ''
         env:
           ALL_TAGS: ${{ steps.pr-info.outputs.all_tags }}
           QUAY_OAUTH_TOKEN: ${{ secrets.QUAY_OAUTH_TOKEN }}
@@ -231,6 +232,7 @@ jobs:
           PRIMARY_TAG: ${{ steps.pr-info.outputs.primary_tag }}
           BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLISH_RUN_ID: ${{ github.run_id }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
         with:
           script: |
             const prNumber = parseInt(process.env.PR_NUMBER);
@@ -240,19 +242,23 @@ jobs:
             const publishRunId = process.env.PUBLISH_RUN_ID;
             const registry = process.env.REGISTRY;
             const image = process.env.REGISTRY_IMAGE;
+            const pushOutcome = process.env.PUSH_OUTCOME;
             
             const prTag = `pr-${prNumber}`;
             const prShaTag = `pr-${prNumber}-${shortSha}`;
             
-            const expirationDate = new Date();
-            expirationDate.setDate(expirationDate.getDate() + 14);
-            const expirationStr = expirationDate.toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric'
-            });
+            let body;
             
-            const body = `## Container Image Published
+            if (pushOutcome === 'success') {
+              const expirationDate = new Date();
+              expirationDate.setDate(expirationDate.getDate() + 14);
+              const expirationStr = expirationDate.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              });
+              
+              body = `## Container Image Published
             
             Multi-platform container images are now available.
             
@@ -279,37 +285,28 @@ jobs:
             - **Publish:** [PR Publish #${publishRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${publishRunId})
             - **Commit:** \`${shortSha}\`
             `;
+            } else {
+              body = `## Container Image Publish Failed
             
-            // Find existing comment to update
-            const comments = await github.rest.issues.listComments({
+            The container image publish step failed. Please check the workflow logs for details.
+            
+            ### Traceability
+            
+            - **Build:** [PR Build #${buildRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${buildRunId})
+            - **Publish:** [PR Publish #${publishRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${publishRunId}) (failed)
+            - **Commit:** \`${shortSha}\`
+            `;
+            }
+            
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: prNumber
+              issue_number: prNumber,
+              body: body
             });
-            
-            const botComment = comments.data.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('## Container Image Published')
-            );
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: body
-              });
-            }
 
       - name: Publish Summary
-        if: env.HAS_QUAY_AUTH == 'true'
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome == 'success'
         env:
           PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
           SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
@@ -352,6 +349,33 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **PR Number**: #${PR_NUMBER}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit SHA**: \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Publish Failed Summary
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome != 'success'
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISH_RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "## PR Image Publish Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The container image publish step failed. Please check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Traceability" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pull Request:** [#${PR_NUMBER}](${SERVER_URL}/${REPOSITORY}/pull/${PR_NUMBER})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build:** [PR Build #${BUILD_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${BUILD_RUN_ID})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Publish:** [PR Publish #${PUBLISH_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${PUBLISH_RUN_ID}) (failed)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail workflow if publish failed
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome != 'success'
+        run: |
+          echo "Publish step failed. Failing workflow."
+          exit 1
 
   # Handle failed upstream workflow
   notify-failure:
