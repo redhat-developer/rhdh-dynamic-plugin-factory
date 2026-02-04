@@ -192,11 +192,13 @@ jobs:
           echo "pushed_tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
 
       - name: Clean up architecture-specific tags
-        if: env.HAS_QUAY_AUTH == 'true'
+        if: env.HAS_QUAY_AUTH == 'true' && env.QUAY_OAUTH_TOKEN != ''
         env:
           ALL_TAGS: ${{ steps.pr-info.outputs.all_tags }}
-          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+          QUAY_OAUTH_TOKEN: ${{ secrets.QUAY_OAUTH_TOKEN }}
         run: |
+          # Quay robot tokens cannot delete tags via API for security reasons
+          # Using an OAuth application token instead
           echo "::group::Clean up architecture-specific tags"
           
           IFS=',' read -ra TAG_ARRAY <<< "$ALL_TAGS"
@@ -208,7 +210,7 @@ jobs:
               
               HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
                 -X DELETE \
-                -H "Authorization: Bearer ${QUAY_TOKEN}" \
+                -H "Authorization: Bearer ${QUAY_OAUTH_TOKEN}" \
                 "https://${REGISTRY}/api/v1/repository/${REGISTRY_IMAGE}/tag/${ARCH_TAG}")
               
               if [[ "$HTTP_STATUS" == "204" || "$HTTP_STATUS" == "200" ]]; then
