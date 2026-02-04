@@ -109,11 +109,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - name: Install skopeo
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q skopeo
-
       - name: Login to Quay
         if: env.HAS_QUAY_AUTH == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -200,7 +195,6 @@ jobs:
         if: env.HAS_QUAY_AUTH == 'true'
         env:
           ALL_TAGS: ${{ steps.pr-info.outputs.all_tags }}
-          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
           QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
         run: |
           echo "::group::Clean up architecture-specific tags"
@@ -212,11 +206,16 @@ jobs:
               ARCH_TAG="${tag}-${arch}"
               echo "Deleting tag: ${REGISTRY}/${REGISTRY_IMAGE}:${ARCH_TAG}"
               
-              skopeo delete \
-                --creds "${QUAY_USERNAME}:${QUAY_TOKEN}" \
-                "docker://${REGISTRY}/${REGISTRY_IMAGE}:${ARCH_TAG}" || {
-                  echo "Warning: Failed to delete ${ARCH_TAG}, continuing..."
-                }
+              HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                -X DELETE \
+                -H "Authorization: Bearer ${QUAY_TOKEN}" \
+                "https://${REGISTRY}/api/v1/repository/${REGISTRY_IMAGE}/tag/${ARCH_TAG}")
+              
+              if [[ "$HTTP_STATUS" == "204" || "$HTTP_STATUS" == "200" ]]; then
+                echo "Successfully deleted ${ARCH_TAG}"
+              else
+                echo "Warning: Failed to delete ${ARCH_TAG} (HTTP ${HTTP_STATUS}), continuing..."
+              fi
             done
           done
           echo "::endgroup::"
@@ -228,13 +227,15 @@ jobs:
           PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
           SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
           PRIMARY_TAG: ${{ steps.pr-info.outputs.primary_tag }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISH_RUN_ID: ${{ github.run_id }}
         with:
           script: |
             const prNumber = parseInt(process.env.PR_NUMBER);
             const shortSha = process.env.SHORT_SHA;
             const primaryTag = process.env.PRIMARY_TAG;
-            const workflowRunId = process.env.WORKFLOW_RUN_ID;
+            const buildRunId = process.env.BUILD_RUN_ID;
+            const publishRunId = process.env.PUBLISH_RUN_ID;
             const registry = process.env.REGISTRY;
             const image = process.env.REGISTRY_IMAGE;
             
@@ -255,7 +256,7 @@ jobs:
             ### Pull Commands
             
             \`\`\`bash
-            # Multi-platform (auto-selects correct arch)
+            # Multi-platform (auto-selects correct architecture)
             docker pull ${registry}/${image}:${prTag}
             
             # Or with specific commit SHA
@@ -264,7 +265,8 @@ jobs:
             
             ### Traceability
             
-            - **Triggered by:** [PR Build #${workflowRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${workflowRunId})
+            - **Build:** [PR Build #${buildRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${buildRunId})
+            - **Publish:** [PR Publish #${publishRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${publishRunId})
             - **Commit:** \`${shortSha}\`
             `;
             
