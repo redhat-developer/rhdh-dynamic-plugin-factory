@@ -244,6 +244,14 @@ jobs:
             const prTag = `pr-${prNumber}`;
             const prShaTag = `pr-${prNumber}-${shortSha}`;
             
+            const expirationDate = new Date();
+            expirationDate.setDate(expirationDate.getDate() + 14);
+            const expirationStr = expirationDate.toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
+            });
+            
             const body = `## Container Image Published
             
             Multi-platform container images are now available.
@@ -253,7 +261,7 @@ jobs:
             | \`${prTag}\` | \`${registry}/${image}:${prTag}\` | linux/amd64, linux/arm64 |
             | \`${prShaTag}\` | \`${registry}/${image}:${prShaTag}\` | linux/amd64, linux/arm64 |
             
-            **Expires:** 2 weeks from now
+            **Expires:** ${expirationStr}
             
             ### Pull Commands
             
@@ -313,6 +321,8 @@ jobs:
           PR_TAG="pr-${PR_NUMBER}"
           PR_SHA_TAG="pr-${PR_NUMBER}-${SHORT_SHA}"
           
+          EXPIRATION_DATE=$(date -d "+14 days" "+%B %d, %Y")
+          
           echo "## PR Image Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Images" >> $GITHUB_STEP_SUMMARY
@@ -322,7 +332,7 @@ jobs:
           echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${PR_TAG}\` | ${PR_TAG} | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
           echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${PR_SHA_TAG}\` | ${PR_SHA_TAG} | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Expires:** 2 weeks" >> $GITHUB_STEP_SUMMARY
+          echo "**Expires:** ${EXPIRATION_DATE}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Traceability" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
