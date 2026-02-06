@@ -84,7 +84,10 @@ jobs:
           REPOSITORY="docker://${REGISTRY}/${REGISTRY_IMAGE}"
           echo "Querying repository: $REPOSITORY"
           
-          ALL_TAGS=$(skopeo list-tags ${REPOSITORY} 2>/dev/null | jq -r '.Tags[]' || echo "")
+          ALL_TAGS=$(skopeo list-tags "${REPOSITORY}" | jq -r '.Tags[]') || {
+            echo "::error::Failed to list tags from ${REPOSITORY}."
+            exit 1
+          }
           
           # Filter for version-release format tags (e.g., 1.8-25, 1.9-1)
           VERSION_RELEASE_TAGS=$(echo "$ALL_TAGS" | grep -E '^[0-9]+\.[0-9]+-[0-9]+$' || echo "")
@@ -143,8 +146,21 @@ jobs:
           fi
           echo "::endgroup::"
           
-          echo "::group::Generate tags"
+          echo "::group::Validate new tag does not conflict"
           VERSION_RELEASE_TAG="${VERSION}-${NEW_RELEASE}"
+          # Grab tags from registry again as to ensure we don't work with stale data
+          CURRENT_TAGS=$(skopeo list-tags "${REPOSITORY}" | jq -r '.Tags[]') || {
+            echo "::error::Failed to refresh tags from ${REPOSITORY}."
+            exit 1
+          }
+          if echo "$CURRENT_TAGS" | grep -qxF "$VERSION_RELEASE_TAG"; then
+            echo "::error::Tag ${VERSION_RELEASE_TAG} already exists in ${REPOSITORY}. Aborting to prevent overwrite."
+            exit 1
+          fi
+          echo "Tag ${VERSION_RELEASE_TAG} is does not conflict with existing tags"
+          echo "::endgroup::"
+          
+          echo "::group::Generate tags"
           echo "Generated tags:"
           echo "  - ${REGISTRY}/${REGISTRY_IMAGE}:${VERSION_RELEASE_TAG}"
           echo "  - ${REGISTRY}/${REGISTRY_IMAGE}:${VERSION}"
