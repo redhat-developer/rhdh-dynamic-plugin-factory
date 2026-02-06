@@ -86,6 +86,12 @@ Examples:
         action="store_true",
         help="Show verbose output (show file and line number)"
     )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        default=False,
+        help="Clean the source directory before cloning source repository. WARNING: This will all the contents of the source directory."
+    )
     return parser
 
 def install_dependencies(workspace_path: Path) -> bool:
@@ -143,7 +149,7 @@ def main():
     
     if source_config and not config.use_local:
         logger.info("[bold blue]Repository Setup[/bold blue]")
-        if not source_config.clone_to_path(config.repo_path):
+        if not source_config.clone_to_path(config.repo_path, clean=args.clean):
             logger.error("Failed to clone repository")
             sys.exit(1)
     elif config.use_local or not source_config:

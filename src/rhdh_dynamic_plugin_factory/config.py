@@ -14,7 +14,7 @@ import json
 import subprocess
 
 from .logger import get_logger
-from .utils import run_command_with_streaming, display_export_results
+from .utils import clean_directory, run_command_with_streaming, display_export_results
 
 @dataclass
 class PluginFactoryConfig:
@@ -420,18 +420,33 @@ class SourceConfig:
         
         return config
     
-    def clone_to_path(self, repo_path: Path) -> bool:
+    def clone_to_path(self, repo_path: Path, clean: bool = False) -> bool:
         """Clone the source repository to the specified path."""
         logger = get_logger("cli")
         
         if not repo_path.exists():
             self.logger.error(f"[red]Destination directory does not exist: {repo_path}[/red]")
             return True
-        
+                
         self.logger.info("[bold blue]Cloning repository[/bold blue]")
         self.logger.info(f"Repository: {self.repo}")
         self.logger.info(f"Reference: {self.repo_ref}")
         self.logger.info(f"Destination directory: {repo_path}")
+        
+        if any(repo_path.iterdir()):
+            self.logger.warning(f"[yellow]Source directory {repo_path} is not empty[/yellow]")
+            if clean:
+                self.logger.warning(f"[yellow]`--clean` argument set, automatically cleaning {repo_path}[/yellow]")
+                clean_directory(repo_path)
+            else:
+                self.logger.warning(f"[yellow]WARNING: Are you sure you want to remove the contents of {repo_path}/? \\[y/N][/yellow]")
+                confirm = input()
+                if confirm != "y":
+                    self.logger.warning("[yellow]Aborted[/yellow]")
+                    return False
+                else:
+                    self.logger.warning(f"[yellow]`y` selected. Cleaning {repo_path}. Note: you can use the `--clean` argument to automatically clean the directory and skip this prompt next time.[/yellow]")
+                    clean_directory(repo_path)
             
         try:
             cmd = ["git", "clone", self.repo, str(repo_path)]

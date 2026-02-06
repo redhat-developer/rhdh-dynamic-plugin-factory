@@ -2,6 +2,7 @@
 Utility functions for RHDH Plugin Factory.
 """
 
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -111,3 +112,15 @@ def display_export_results(workspace_path: Path, logger) -> bool:
     
     return has_failures
 
+def clean_directory(directory: Path) -> None:
+    """Clean the directory by removing all contents but keeping the directory itself.
+    This is to handle cleaning volume mounted directories.
+    
+    Args:
+        directory: Path to the directory to clean.
+    """
+    for item in directory.iterdir():
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()

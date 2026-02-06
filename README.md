@@ -299,6 +299,7 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 | `--use-local` | `false` | Use local repository instead of cloning from source.json |
 | `--log-level` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `--verbose` | `false` | Show verbose output with file and line numbers |
+| `--clean` | `false` | Automatically removes content of `--repo-path` directory when cloning from `source.json`. Ignored if `--use-local` is used. |
 
 ### Understanding Volume Mounts
 

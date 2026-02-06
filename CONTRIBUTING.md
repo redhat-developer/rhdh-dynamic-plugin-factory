@@ -133,7 +133,9 @@ Once you have the local environment set up, you can run the factory directly wit
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./config \
   --workspace-path workspaces/todo \
-  --output-dir ./outputs
+  --repo-path ./source \
+  --output-dir ./outputs \
+  --clean
 ```
 
 #### Build and push to registry
@@ -153,7 +155,9 @@ Then run:
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./config \
   --workspace-path workspaces/announcements \
-  --push-images
+  --repo-path ./source/ \
+  --push-images \
+  --clean
 ```
 
 The factory will automatically read the registry credentials from `./config/.env`.
@@ -255,15 +259,6 @@ pytest tests/ --cov=src/rhdh_dynamic_plugin_factory --cov-report=term-missing
 ```
 
 This will show which lines of code are not covered by tests.
-
-### Run Tests in Watch Mode
-
-For active development, you can use pytest-watch:
-
-```bash
-pip install pytest-watch
-ptw tests/
-```
 
 ### Writing Tests
 
