@@ -1,0 +1,265 @@
+name: 'Build Container'
+description: 'Reusable action for building container images with support for both artifact export and registry push'
+
+inputs:
+  registry:
+    description: 'Container registry URL (e.g., quay.io)'
+    required: true
+  image:
+    description: 'Full image name including namespace (e.g., my-org/my-image)'
+    required: true
+  registry-username:
+    description: 'Registry username for login (required when push is true)'
+    required: false
+  registry-password:
+    description: 'Registry password/token for login (required when push is true)'
+    required: false
+  push:
+    description: 'Whether to push the image to registry. If false, exports as artifact instead.'
+    required: false
+    default: 'true'
+  pr-number:
+    description: 'PR number - if provided, generates PR-style tags (pr-X, pr-X-sha)'
+    required: false
+  commit-sha:
+    description: 'Full commit SHA'
+    required: true
+  version:
+    description: 'Version string (e.g., 1.8) - used for release-style tags'
+    required: false
+  release-number:
+    description: 'Release number (e.g., 26) - used for release-style tags'
+    required: false
+  tag-latest:
+    description: 'Whether to also tag as latest (only applies to release-style tags)'
+    required: false
+    default: 'false'
+  platforms:
+    description: 'Platforms to build for'
+    required: false
+    default: 'linux/amd64,linux/arm64'
+  expiration:
+    description: 'Tag expiration label for PR images (e.g., 2w)'
+    required: false
+    default: '2w'
+
+outputs:
+  primary-tag:
+    description: 'The primary tag for the built image'
+    value: ${{ steps.tags.outputs.primary_tag }}
+  primary-image:
+    description: 'Full primary image reference'
+    value: ${{ steps.tags.outputs.primary_image }}
+  all-tags:
+    description: 'All tags as comma-separated list'
+    value: ${{ steps.tags.outputs.all_tags }}
+  short-sha:
+    description: 'Short commit SHA'
+    value: ${{ steps.tags.outputs.short_sha }}
+  artifact-name:
+    description: 'Name of the uploaded artifact (when push is false)'
+    value: ${{ steps.export.outputs.artifact_name }}
+  platform:
+    description: 'Platform that was built (when push is false)'
+    value: ${{ steps.export.outputs.platform }}
+  arch:
+    description: 'Architecture that was built (when push is false)'
+    value: ${{ steps.export.outputs.arch }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        PUSH: ${{ inputs.push }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        VERSION: ${{ inputs.version }}
+        RELEASE_NUMBER: ${{ inputs.release-number }}
+      run: |
+        # Must provide either pr-number OR version+release-number
+        if [[ -n "$PR_NUMBER" && -n "$VERSION" ]]; then
+          echo "Error: Cannot provide both pr-number and version. Choose one tagging style."
+          exit 1
+        fi
+        
+        if [[ -z "$PR_NUMBER" && -z "$VERSION" ]]; then
+          echo "Error: Must provide either pr-number (for PR builds) or version (for release builds)"
+          exit 1
+        fi
+        
+        if [[ -n "$VERSION" && -z "$RELEASE_NUMBER" ]]; then
+          echo "Error: release-number is required when version is provided"
+          exit 1
+        fi
+
+    - name: Prepare tags
+      id: tags
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        IMAGE: ${{ inputs.image }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+        VERSION: ${{ inputs.version }}
+        RELEASE_NUMBER: ${{ inputs.release-number }}
+        TAG_LATEST: ${{ inputs.tag-latest }}
+      run: |
+        SHORT_SHA="${COMMIT_SHA:0:7}"
+        echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+        
+        if [[ -n "$PR_NUMBER" ]]; then
+          # Tags for PR builds
+          PRIMARY_TAG="pr-${PR_NUMBER}"
+          ALL_TAGS="${PRIMARY_TAG},pr-${PR_NUMBER}-${SHORT_SHA}"
+          echo "Building with PR tags: ${ALL_TAGS}"
+        else
+          # Tags for release builds
+          PRIMARY_TAG="${VERSION}-${RELEASE_NUMBER}"
+          ALL_TAGS="${PRIMARY_TAG},${VERSION},${SHORT_SHA}"
+          if [[ "$TAG_LATEST" == "true" ]]; then
+            ALL_TAGS="${ALL_TAGS},latest"
+          fi
+          echo "Building with release tags: ${ALL_TAGS}"
+        fi
+        
+        echo "primary_tag=${PRIMARY_TAG}" >> $GITHUB_OUTPUT
+        echo "primary_image=${REGISTRY}/${IMAGE}:${PRIMARY_TAG}" >> $GITHUB_OUTPUT
+        echo "all_tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+    - name: Login to Registry
+      if: inputs.push == 'true' && inputs.registry-username != '' && inputs.registry-password != ''
+      uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: Generate Docker tags
+      id: docker-tags
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        IMAGE: ${{ inputs.image }}
+        ALL_TAGS: ${{ steps.tags.outputs.all_tags }}
+        PUSH: ${{ inputs.push }}
+        PLATFORMS: ${{ inputs.platforms }}
+      run: |
+        ARCH=""
+        if [[ "$PUSH" != "true" ]]; then
+          if ! [[ "$PLATFORMS" =~ ^[a-z]+/[a-z0-9]+$ ]]; then
+            echo "Error: Invalid platform format: $PLATFORMS"
+            exit 1
+          fi
+          ARCH="${PLATFORMS#*/}"
+          echo "Export mode: adding architecture suffix '-${ARCH}' to tags"
+        fi
+        
+        # Convert comma-separated tags to newline-separated full image references
+        DOCKER_TAGS=""
+        IFS=',' read -ra TAG_ARRAY <<< "$ALL_TAGS"
+        for tag in "${TAG_ARRAY[@]}"; do
+          if [[ -n "$DOCKER_TAGS" ]]; then
+            DOCKER_TAGS="${DOCKER_TAGS}"$'\n'
+          fi
+          if [[ -n "$ARCH" ]]; then
+            DOCKER_TAGS="${DOCKER_TAGS}${REGISTRY}/${IMAGE}:${tag}-${ARCH}"
+          else
+            DOCKER_TAGS="${DOCKER_TAGS}${REGISTRY}/${IMAGE}:${tag}"
+          fi
+        done
+        
+        {
+          echo "tags<<EOF"
+          echo "$DOCKER_TAGS"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+
+    - name: Determine labels
+      id: labels
+      shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr-number }}
+        EXPIRATION: ${{ inputs.expiration }}
+      run: |
+        if [[ -n "$PR_NUMBER" ]]; then
+          echo "labels=quay.expires-after=${EXPIRATION}" >> $GITHUB_OUTPUT
+        else
+          echo "labels=" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build and Push
+      if: inputs.push == 'true'
+      uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+      with:
+        context: .
+        platforms: ${{ inputs.platforms }}
+        push: true
+        tags: ${{ steps.docker-tags.outputs.tags }}
+        labels: ${{ steps.labels.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build and Export
+      if: inputs.push != 'true'
+      uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+      with:
+        context: .
+        # When exporting as artifact, only single platform is supported
+        # Use the first platform from the input (caller should pass single platform)
+        platforms: ${{ inputs.platforms }}
+        push: false
+        tags: ${{ steps.docker-tags.outputs.tags }}
+        labels: ${{ steps.labels.outputs.labels }}
+        outputs: type=docker,dest=/tmp/container-image.tar
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Prepare artifact name
+      if: inputs.push != 'true'
+      id: export
+      shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr-number }}
+        VERSION: ${{ inputs.version }}
+        RELEASE_NUMBER: ${{ inputs.release-number }}
+        PLATFORMS: ${{ inputs.platforms }}
+      run: |
+        # Validate platform format (must be os/arch, e.g., linux/amd64)
+        if ! [[ "$PLATFORMS" =~ ^[a-z]+/[a-z0-9]+$ ]]; then
+          echo "Error: Invalid platform format: $PLATFORMS"
+          echo "Expected format: os/arch (e.g., linux/amd64, linux/arm64)"
+          exit 1
+        fi
+        
+        # Extract architecture from platform (e.g., linux/amd64 -> amd64)
+        ARCH="${PLATFORMS#*/}"
+        
+        if ! [[ "$ARCH" =~ ^(amd64|arm64)$ ]]; then
+          echo "Error: Unsupported architecture: $ARCH"
+          exit 1
+        fi
+        
+        if [[ -n "$PR_NUMBER" ]]; then
+          ARTIFACT_NAME="container-image-pr-${PR_NUMBER}-${ARCH}"
+        else
+          ARTIFACT_NAME="container-image-${VERSION}-${RELEASE_NUMBER}-${ARCH}"
+        fi
+        echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+        echo "platform=${PLATFORMS}" >> $GITHUB_OUTPUT
+        echo "arch=${ARCH}" >> $GITHUB_OUTPUT
+
+    - name: Upload container artifact
+      if: inputs.push != 'true'
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      with:
+        name: ${{ steps.export.outputs.artifact_name }}
+        path: /tmp/container-image.tar
+        retention-days: 7
+        if-no-files-found: error

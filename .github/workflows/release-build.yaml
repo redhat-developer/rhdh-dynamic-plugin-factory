@@ -1,0 +1,246 @@
+# Build and publish the container image for the RHDH Dynamic Plugin Factory after push to main or release-* branches.
+name: Build and Publish Container
+on:
+  workflow_dispatch:
+    inputs:
+      push-images:
+        description: 'Push images to registry'
+        required: false
+        default: 'true'
+  push:
+    branches:
+      - main
+      - 'release-*'
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: quay.io
+  REGISTRY_IMAGE: rhdh-community/dynamic-plugins-factory
+
+jobs:
+  build:
+    env:
+      HAS_QUAY_AUTH: ${{ secrets.QUAY_USERNAME != '' && secrets.QUAY_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # 6.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check if build should be skipped
+        id: skip_check
+        uses: ./.github/actions/should-skip-build
+        with:
+          registry: ${{ env.REGISTRY }}
+          image: ${{ env.REGISTRY_IMAGE }}
+          commit-sha: ${{ github.sha }}
+          check-image: 'true'
+          file-patterns: |
+            \.md$
+            ^renovate\.json$
+            ^examples\/
+            ^\.cursor\/
+            ^tests\/
+
+      - name: Install skopeo
+        if: steps.skip_check.outputs.should_skip != 'true'
+        run: |
+          echo "Installing skopeo"
+          sudo apt-get update -q
+          sudo apt-get install -y -q skopeo
+
+      - name: Prepare Tags
+        if: steps.skip_check.outputs.should_skip != 'true'
+        id: prepare
+        run: |
+          set -e
+          echo "::group::Extract Version from __version__.py"
+          # Extract version from __version__.py
+          FULL_VERSION=$(grep -oP '__version__ = "\K[^"]+' src/rhdh_dynamic_plugin_factory/__version__.py)
+          echo "Full version extracted: $FULL_VERSION"
+          
+          # Strip patch version (e.g., 1.8.0 -> 1.8)
+          VERSION=$(echo "$FULL_VERSION" | cut -d. -f1,2)
+          echo "Stripped version: $VERSION"
+          echo "::endgroup::"
+          
+          echo "::group::Get commit SHA"
+          # Get short SHA
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "Short SHA: $SHORT_SHA"
+          echo "::endgroup::"
+          
+          echo "::group::Query existing tags using skopeo"
+          REPOSITORY="docker://${REGISTRY}/${REGISTRY_IMAGE}"
+          echo "Querying repository: $REPOSITORY"
+          
+          ALL_TAGS=$(skopeo list-tags "${REPOSITORY}" | jq -r '.Tags[]') || {
+            echo "::error::Failed to list tags from ${REPOSITORY}."
+            exit 1
+          }
+          
+          # Filter for version-release format tags (e.g., 1.8-25, 1.9-1)
+          VERSION_RELEASE_TAGS=$(echo "$ALL_TAGS" | grep -E '^[0-9]+\.[0-9]+-[0-9]+$' || echo "")
+          
+          BASETAG="${VERSION//\./\\.}"
+          MATCHING_TAGS=$(echo "$VERSION_RELEASE_TAGS" | grep -E "^${BASETAG}-[0-9]+$" | sort -V || echo "")
+          
+          if [ -z "$MATCHING_TAGS" ]; then
+            echo "No tags found for version $VERSION, starting at release 0"
+            LATEST_TAG_FOR_VERSION="none"
+          else
+            LATEST_TAG_FOR_VERSION=$(echo "$MATCHING_TAGS" | tail -1)
+            echo "Latest tag for version $VERSION: $LATEST_TAG_FOR_VERSION"
+          fi
+          echo "::endgroup::"
+          
+          echo "::group::Determine if this is the highest version"
+          # Find the highest version across all releases
+          HIGHEST_VERSION=$(echo "$VERSION_RELEASE_TAGS" | cut -d'-' -f1 | sort -V | uniq | tail -1 || echo "")
+          echo "Highest version in registry: $HIGHEST_VERSION"
+          
+          IS_HIGHEST_VERSION="false"
+          if [[ -z "$HIGHEST_VERSION" ]]; then
+            # No versions exist yet, this is the highest
+            IS_HIGHEST_VERSION="true"
+            echo "No existing versions, this will be the highest"
+          elif [[ "$VERSION" == "$HIGHEST_VERSION" ]]; then
+            # Current version matches highest
+            IS_HIGHEST_VERSION="true"
+            echo "Current version $VERSION matches highest version"
+          else
+            # Compare versions numerically
+            HIGHER=$(printf '%s\n%s' "$VERSION" "$HIGHEST_VERSION" | sort -V | tail -1)
+            if [[ "$HIGHER" == "$VERSION" ]]; then
+              IS_HIGHEST_VERSION="true"
+              echo "Current version $VERSION is higher than $HIGHEST_VERSION"
+            else
+              echo "Current version $VERSION is lower than $HIGHEST_VERSION, will not tag as latest"
+            fi
+          fi
+          echo "::endgroup::"
+          
+          echo "::group::Calculate new version and release number"
+          # Parse the latest tag to get version and release
+          if [[ "$LATEST_TAG_FOR_VERSION" =~ ^([0-9]+\.[0-9]+)-([0-9]+)$ ]]; then
+            LATEST_VERSION="${BASH_REMATCH[1]}"
+            LATEST_RELEASE="${BASH_REMATCH[2]}"
+            echo "Latest version found: $LATEST_VERSION"
+            echo "Latest release found: $LATEST_RELEASE"
+            
+            NEW_RELEASE=$((LATEST_RELEASE + 1))
+            echo "Incrementing release to: $NEW_RELEASE"
+          else
+            NEW_RELEASE=0
+            echo "No valid latest tag found, starting at release: $NEW_RELEASE"
+          fi
+          echo "::endgroup::"
+          
+          echo "::group::Validate new tag does not conflict"
+          VERSION_RELEASE_TAG="${VERSION}-${NEW_RELEASE}"
+          # Grab tags from registry again as to ensure we don't work with stale data
+          CURRENT_TAGS=$(skopeo list-tags "${REPOSITORY}" | jq -r '.Tags[]') || {
+            echo "::error::Failed to refresh tags from ${REPOSITORY}."
+            exit 1
+          }
+          if echo "$CURRENT_TAGS" | grep -qxF "$VERSION_RELEASE_TAG"; then
+            echo "::error::Tag ${VERSION_RELEASE_TAG} already exists in ${REPOSITORY}. Aborting to prevent overwrite."
+            exit 1
+          fi
+          echo "Tag ${VERSION_RELEASE_TAG} is does not conflict with existing tags"
+          echo "::endgroup::"
+          
+          echo "::group::Generate tags"
+          echo "Generated tags:"
+          echo "  - ${REGISTRY}/${REGISTRY_IMAGE}:${VERSION_RELEASE_TAG}"
+          echo "  - ${REGISTRY}/${REGISTRY_IMAGE}:${VERSION}"
+          echo "  - ${REGISTRY}/${REGISTRY_IMAGE}:${SHORT_SHA}"
+          if [[ "$IS_HIGHEST_VERSION" == "true" ]]; then
+            echo "  - ${REGISTRY}/${REGISTRY_IMAGE}:latest"
+          else
+            echo "  (skipping latest tag - not highest version)"
+          fi
+          echo "::endgroup::"
+          
+          # Set outputs
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "release=${NEW_RELEASE}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "version_release_tag=${VERSION_RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "is_highest_version=${IS_HIGHEST_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Container Image
+        if: steps.skip_check.outputs.should_skip != 'true' && env.HAS_QUAY_AUTH == 'true'
+        id: build
+        uses: ./.github/actions/build-container
+        with:
+          registry: ${{ env.REGISTRY }}
+          image: ${{ env.REGISTRY_IMAGE }}
+          registry-username: ${{ secrets.QUAY_USERNAME }}
+          registry-password: ${{ secrets.QUAY_TOKEN }}
+          push: ${{ inputs.push-images != 'false' }}
+          commit-sha: ${{ github.sha }}
+          version: ${{ steps.prepare.outputs.version }}
+          release-number: ${{ steps.prepare.outputs.release }}
+          tag-latest: ${{ steps.prepare.outputs.is_highest_version }}
+
+      - name: Display Build Summary
+        if: steps.skip_check.outputs.should_skip != 'true'
+        env:
+          VERSION_RELEASE_TAG: ${{ steps.build.outputs.primary-tag }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+          SHORT_SHA: ${{ steps.build.outputs.short-sha }}
+          IS_HIGHEST: ${{ steps.prepare.outputs.is_highest_version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "## Container Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${VERSION_RELEASE_TAG}\` | ${VERSION_RELEASE_TAG} |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${VERSION}\` | ${VERSION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${SHORT_SHA}\` | ${SHORT_SHA} |" >> $GITHUB_STEP_SUMMARY
+          if [[ "$IS_HIGHEST" == "true" ]]; then
+            echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:latest\` | latest |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${REF_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${VERSION_RELEASE_TAG} (is latest: ${IS_HIGHEST})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${REGISTRY}/${REGISTRY_IMAGE}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build Skipped Summary
+        if: steps.skip_check.outputs.should_skip == 'true'
+        env:
+          SKIP_REASON: ${{ steps.skip_check.outputs.skip_reason }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          
+          echo "## Container Build Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Reason" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${SKIP_REASON}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${REGISTRY}/${REGISTRY_IMAGE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: \`${COMMIT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Short SHA**: \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No build or push operations were performed." >> $GITHUB_STEP_SUMMARY
