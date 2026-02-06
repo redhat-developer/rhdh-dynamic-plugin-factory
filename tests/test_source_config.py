@@ -194,3 +194,230 @@ class TestSourceConfigCloneToPath:
             
             assert result is False
 
+
+class TestSourceConfigCloneToPathClean:
+    """Tests for SourceConfig.clone_to_path clean argument and user prompt behavior."""
+
+    def test_clean_flag_auto_cleans_nonempty_directory(self, tmp_path):
+        """Test that clean=True automatically cleans a non-empty directory without prompting."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "existing_file.txt").write_text("existing content")
+        (repo_path / "subdir").mkdir()
+        (repo_path / "subdir" / "nested.txt").write_text("nested content")
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory") as mock_clean:
+            mock_run.return_value = 0
+
+            result = config.clone_to_path(repo_path, clean=True)
+
+            assert result is True
+            mock_clean.assert_called_once_with(repo_path)
+
+    def test_clean_flag_does_not_prompt_user(self, tmp_path):
+        """Test that clean=True does not call input() for user confirmation."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "existing_file.txt").write_text("existing content")
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory"), \
+             patch("builtins.input") as mock_input:
+            mock_run.return_value = 0
+
+            config.clone_to_path(repo_path, clean=True)
+
+            mock_input.assert_not_called()
+
+    def test_no_clean_flag_prompts_user_confirm_yes(self, tmp_path):
+        """Test that clean=False prompts user and proceeds when user enters 'y'."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "existing_file.txt").write_text("existing content")
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory") as mock_clean, \
+             patch("builtins.input", return_value="y"):
+            mock_run.return_value = 0
+
+            result = config.clone_to_path(repo_path, clean=False)
+
+            assert result is True
+            mock_clean.assert_called_once_with(repo_path)
+
+    def test_no_clean_flag_prompts_user_confirm_no(self, tmp_path):
+        """Test that clean=False prompts user and aborts when user enters anything other than 'y'."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "existing_file.txt").write_text("existing content")
+
+        with patch("builtins.input", return_value="n") as mock_input:
+            result = config.clone_to_path(repo_path, clean=False)
+
+            assert result is False
+            mock_input.assert_called_once()
+
+    def test_no_clean_flag_prompts_user_empty_input_aborts(self, tmp_path):
+        """Test that clean=False aborts when user presses Enter without typing anything."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "existing_file.txt").write_text("existing content")
+
+        with patch("builtins.input", return_value=""):
+            result = config.clone_to_path(repo_path, clean=False)
+
+            assert result is False
+
+    def test_empty_directory_skips_clean_and_prompt(self, tmp_path):
+        """Test that an empty directory skips both clean and prompt logic."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        # Directory is empty
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory") as mock_clean, \
+             patch("builtins.input") as mock_input:
+            mock_run.return_value = 0
+
+            result = config.clone_to_path(repo_path, clean=True)
+
+            assert result is True
+            mock_clean.assert_not_called()
+            mock_input.assert_not_called()
+
+    def test_empty_directory_no_clean_flag_skips_prompt(self, tmp_path):
+        """Test that an empty directory with clean=False does not prompt user."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        # Directory is empty
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("builtins.input") as mock_input:
+            mock_run.return_value = 0
+
+            result = config.clone_to_path(repo_path, clean=False)
+
+            assert result is True
+            mock_input.assert_not_called()
+
+    def test_clean_flag_default_is_false(self, tmp_path):
+        """Test that the clean parameter defaults to False."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "existing_file.txt").write_text("existing content")
+
+        with patch("builtins.input", return_value="n"):
+            # Call without clean argument - should prompt (default clean=False)
+            result = config.clone_to_path(repo_path)
+
+            assert result is False
+
+    def test_clean_proceeds_with_clone_after_cleaning(self, tmp_path):
+        """Test that after cleaning, git clone and checkout are executed."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="v1.0.0"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "old_file.txt").write_text("old content")
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory"):
+            mock_run.return_value = 0
+
+            result = config.clone_to_path(repo_path, clean=True)
+
+            assert result is True
+            assert mock_run.call_count == 2  # clone + checkout
+
+            # Verify clone command
+            clone_call = mock_run.call_args_list[0]
+            assert clone_call[0][0] == ["git", "clone", "https://github.com/testowner/testrepo", str(repo_path)]
+
+            # Verify checkout command
+            checkout_call = mock_run.call_args_list[1]
+            assert checkout_call[0][0] == ["git", "checkout", "v1.0.0"]
+
+    def test_prompt_confirm_yes_proceeds_with_clone(self, tmp_path):
+        """Test that after user confirms 'y', git clone and checkout are executed."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "old_file.txt").write_text("old content")
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory"), \
+             patch("builtins.input", return_value="y"):
+            mock_run.return_value = 0
+
+            result = config.clone_to_path(repo_path, clean=False)
+
+            assert result is True
+            assert mock_run.call_count == 2  # clone + checkout
+
+    def test_prompt_confirm_no_does_not_clone(self, tmp_path):
+        """Test that when user declines, git clone is not executed."""
+        config = SourceConfig(
+            repo="https://github.com/testowner/testrepo",
+            repo_ref="main"
+        )
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "existing_file.txt").write_text("existing content")
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+             patch("builtins.input", return_value="n"):
+
+            result = config.clone_to_path(repo_path, clean=False)
+
+            assert result is False
+            mock_run.assert_not_called()
+
