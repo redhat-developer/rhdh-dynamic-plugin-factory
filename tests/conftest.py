@@ -186,13 +186,13 @@ def make_config(setup_test_env):
         config = make_config(registry_url=None)  # Explicitly set to None
     """
     def _make_config(**overrides):
-        config = PluginFactoryConfig()
-        config.config_dir = setup_test_env["config_dir"]
-        config.repo_path = setup_test_env["source_dir"]
-        config.rhdh_cli_version = "1.7.2"
-        config.workspace_path = "."
-        for key, value in overrides.items():
-            setattr(config, key, value)
-        return config
+        defaults = {
+            "config_dir": setup_test_env["config_dir"],
+            "repo_path": setup_test_env["source_dir"],
+            "rhdh_cli_version": "1.7.2",
+            "workspace_path": ".",
+        }
+        defaults.update(overrides)
+        return PluginFactoryConfig(**defaults)
     return _make_config
 

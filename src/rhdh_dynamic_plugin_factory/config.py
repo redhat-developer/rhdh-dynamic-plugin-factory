@@ -3,9 +3,10 @@ Configuration management for RHDH Plugin Factory.
 """
 
 import argparse
+from logging import Logger
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, ClassVar
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 import yaml
@@ -36,90 +37,95 @@ class PluginFactoryConfig:
 
     log_level: str = field(default="INFO")
     use_local: bool = field(default=False)
+    push_images: bool = field(default=False)
 
-    logger = get_logger("config")
+    logger: ClassVar[Logger] = get_logger("config")
+    
+    def __post_init__(self) -> None:
+        """Validate configuration fields after initialization."""
+        if not self.rhdh_cli_version:
+            raise ConfigurationError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
+        
+        if not self.workspace_path:
+            raise ConfigurationError("WORKSPACE_PATH must be set via environment variable or --workspace-path argument")
+        
+        valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if self.log_level.upper() not in valid_log_levels:
+            raise ConfigurationError(f"Invalid log level: {self.log_level}")
+        
+        if self.push_images:
+            if not self.registry_url:
+                raise ConfigurationError("REGISTRY_URL environment variable is required when --push-images is enabled")
+            if not self.registry_namespace:
+                raise ConfigurationError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
+            if not self.registry_username or not self.registry_password:
+                raise ConfigurationError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
+
     @classmethod
-    def load_from_env(cls, args: argparse.Namespace, env_file: Optional[Path] = None) -> "PluginFactoryConfig":
+    def load_from_env(cls, args: argparse.Namespace, env_file: Optional[Path] = None, push_images: bool = False) -> "PluginFactoryConfig":
         """Load configuration from environment variables and .env files.
         
         Loads default.env first, then optionally loads additional env file to override defaults or provide additional values.
         Environment variables take precedence over .env file values.
         
         Args:
-            env_file: Optional additional .env file to merge with defaults
+            args: Parsed CLI arguments.
+            env_file: Optional additional .env file to merge with defaults.
+            push_images: Whether to push images to a registry (triggers registry validation and login).
         """
-        
-        config = cls()
-        
         default_env_path = Path(__file__).parent.parent.parent / "default.env"
         
-        config.logger.debug(f'[bold blue]Loading environment variables from {default_env_path}[/bold blue]')
+        cls.logger.debug(f'[bold blue]Loading environment variables from {default_env_path}[/bold blue]')
 
         if default_env_path.exists():
             load_dotenv(default_env_path)
-            config.logger.debug(f'[green]✓ Loaded {default_env_path}[/green]')
+            cls.logger.debug(f'[green]✓ Loaded {default_env_path}[/green]')
             
         if env_file and env_file.exists():
             load_dotenv(env_file, override=True)
-            config.logger.debug(f'[green]✓ Loaded {env_file}[/green]')
+            cls.logger.debug(f'[green]✓ Loaded {env_file}[/green]')
 
-        config.logger.debug('[bold blue]Loading configuration from environment variables and CLI arguments[/bold blue]')
+        cls.logger.debug('[bold blue]Loading configuration from environment variables and CLI arguments[/bold blue]')
         
-        config.workspace_path = os.getenv("WORKSPACE_PATH", args.workspace_path)
-        config.config_dir = args.config_dir
-        config.repo_path = args.repo_path
+        config_dir = args.config_dir
+        repo_path = args.repo_path
         
-        config.rhdh_cli_version = os.getenv("RHDH_CLI_VERSION", "")
-
-        config.registry_url = os.getenv("REGISTRY_URL")
-        config.registry_username = os.getenv("REGISTRY_USERNAME")
-        config.registry_password = os.getenv("REGISTRY_PASSWORD")
-        config.registry_namespace = os.getenv("REGISTRY_NAMESPACE")
-        config.registry_insecure = os.getenv("REGISTRY_INSECURE", "false").lower() == "true"
-
-        config.log_level = os.getenv("LOG_LEVEL", args.log_level)
-        
-        config.use_local = args.use_local
-        
-        dirs_to_create = [config.config_dir, config.repo_path]
-        for dir_path in dirs_to_create:
+        # Ensure required directories exist before constructing config
+        for dir_path in [config_dir, repo_path]:
             os.makedirs(dir_path, exist_ok=True)
         
-        if not config.rhdh_cli_version:
-            raise ConfigurationError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
-        
-        if not config.workspace_path:
-            raise ConfigurationError("WORKSPACE_PATH must be set via environment variable or --workspace-path argument")
-        
-        valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        if config.log_level.upper() not in valid_log_levels:
-            raise ConfigurationError(f"Invalid log level: {config.log_level}")
+        config = cls(
+            rhdh_cli_version=os.getenv("RHDH_CLI_VERSION", ""),
+            repo_path=repo_path,
+            config_dir=config_dir,
+            workspace_path=os.getenv("WORKSPACE_PATH", args.workspace_path),
+            registry_url=os.getenv("REGISTRY_URL"),
+            registry_username=os.getenv("REGISTRY_USERNAME"),
+            registry_password=os.getenv("REGISTRY_PASSWORD"),
+            registry_namespace=os.getenv("REGISTRY_NAMESPACE"),
+            registry_insecure=os.getenv("REGISTRY_INSECURE", "false").lower() == "true",
+            log_level=os.getenv("LOG_LEVEL", args.log_level),
+            use_local=args.use_local,
+            push_images=push_images,
+        )
         
         config._validate_source_json()
         config._validate_plugins_list()
         
+        if push_images:
+            config._buildah_login()
+        
         return config
     
-    def load_registry_config(self, push_images: bool = False) -> None:
-        """
-        Load registry configuration from environment variables and attempt buildah login.
-        Only validates required registry fields if `push_images` is True.
-        """
-        # Only validate registry configuration if we're pushing images
-        if not push_images:
-            self.logger.info("Skipping registry configuration (not pushing images)")
-            return
-            
-        if not self.registry_url:
-            raise ConfigurationError("REGISTRY_URL environment variable is required when --push-images is enabled")
+    def _buildah_login(self) -> None:
+        """Login to the container registry using buildah.
         
-        if not self.registry_namespace:
-            raise ConfigurationError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
+        Assumes registry fields have already been validated by __post_init__.
         
-        if not self.registry_username or not self.registry_password:
-            raise ConfigurationError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
+        Raises:
+            ExecutionError: If the buildah login command fails.
+        """
         ## TODO: Add support for token logins for ghcr.io registry as well
-
         try:
             cmd = [
                 "buildah", "login",
@@ -140,9 +146,11 @@ class PluginFactoryConfig:
             )
             self.logger.info(f"Logged in to registry {self.registry_url} with buildah.")
         except subprocess.CalledProcessError as e:
-            self.logger.warning(
-                f"Failed to login to registry {self.registry_url} with buildah: {e.stderr.decode().strip()}"
-            )
+            raise ExecutionError(
+                f"Failed to login to registry {self.registry_url} with buildah: {e.stderr.decode().strip()}",
+                step="buildah login",
+                returncode=e.returncode,
+            ) from e
     
     def _validate_source_json(self) -> None:
         """Validate source.json file existence and repo_path state."""
@@ -319,7 +327,7 @@ class PluginFactoryConfig:
                 step=STEP_NAME
             ) from e
     
-    def export_plugins(self, output_dir: str, push_images: bool) -> None:
+    def export_plugins(self, output_dir: str) -> None:
         """Export plugins using export-workspace.sh script.
 
         Raises:
@@ -361,7 +369,7 @@ class PluginFactoryConfig:
             "INPUTS_APP_CONFIG_FILE_NAME": "app-config.dynamic.yaml",
             "INPUTS_PLUGINS_FILE": os.path.abspath(plugins_list_file),
             "INPUTS_CLI_PACKAGE": "@red-hat-developer-hub/cli",
-            "INPUTS_PUSH_CONTAINER_IMAGE": "true" if push_images else "false",
+            "INPUTS_PUSH_CONTAINER_IMAGE": "true" if self.push_images else "false",
             "INPUTS_JANUS_CLI_VERSION": self.rhdh_cli_version,
             "INPUTS_IMAGE_REPOSITORY_PREFIX": f"{self.registry_url or 'localhost'}/{self.registry_namespace or 'default'}",
             "INPUTS_DESTINATION": os.path.abspath(output_dir),
@@ -417,8 +425,17 @@ class SourceConfig:
     """Configuration for plugin source repository."""
     repo: str
     repo_ref: str
-    
-    logger = get_logger("source_config")
+    workspace_path: str
+    logger: ClassVar[Logger] = get_logger("source_config")
+
+    def __post_init__(self) -> None:
+        if not self.workspace_path:
+            raise ConfigurationError("workspace-path is required")
+        if not self.repo:
+            raise ConfigurationError("repo is required")
+        if not self.repo_ref:
+            raise ConfigurationError("repo_ref is required")
+        
 
     @classmethod
     def from_file(cls, source_file: Path) -> "SourceConfig":
@@ -440,19 +457,16 @@ class SourceConfig:
         try:
             repo = data["repo"]
             repo_ref = data.get("repo-ref")
+            workspace_path = data.get("workspace-path")
         except KeyError as e:
             raise ConfigurationError(f"Missing required field {e} in {source_file}")
         
         config = cls(
             repo=repo,
             repo_ref=repo_ref,
+            workspace_path=workspace_path,
         )
 
-        if not config.repo:
-            raise ConfigurationError("repo is required")
-        if not config.repo_ref:
-            raise ConfigurationError("repo_ref is required")
-        
         return config
     
     def clone_to_path(self, repo_path: Path, clean: bool = False) -> None:

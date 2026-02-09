@@ -32,7 +32,7 @@ class TestExportPlugins:
                             mock_run_cmd.return_value = 0
                             mock_display.return_value = False
                             
-                            config.export_plugins(output_dir, push_images=False)  # Should not raise any exceptions
+                            config.export_plugins(output_dir)  # Should not raise any exceptions
                             
                             mock_run_cmd.assert_called_once()
                             call_args = mock_run_cmd.call_args
@@ -69,7 +69,7 @@ class TestExportPlugins:
                             mock_run_cmd.return_value = 0
                             mock_display.return_value = False
                             
-                            _result = config.export_plugins(output_dir, push_images=False)
+                            _result = config.export_plugins(output_dir)
                             
                             env = mock_run_cmd.call_args[1]["env"]
                             
@@ -88,8 +88,11 @@ class TestExportPlugins:
     def test_export_plugins_environment_variables_with_push(self, make_config, setup_test_env):
         """Test that environment variables are correctly set when push_images is True."""
         config = make_config(
+            push_images=True,
             registry_url="quay.io",
-            registry_namespace="test-namespace"
+            registry_namespace="test-namespace",
+            registry_username="test-user",
+            registry_password="test-password",
         )
         
         output_dir = str(setup_test_env["tmp_path"] / "output")
@@ -102,7 +105,7 @@ class TestExportPlugins:
                             mock_run_cmd.return_value = 0
                             mock_display.return_value = False
                             
-                            _result = config.export_plugins(output_dir, push_images=True)
+                            _result = config.export_plugins(output_dir)
                             
                             env = mock_run_cmd.call_args[1]["env"]
                             assert env["INPUTS_PUSH_CONTAINER_IMAGE"] == "true"
@@ -124,7 +127,7 @@ class TestExportPlugins:
                             mock_run_cmd.return_value = 0
                             mock_display.return_value = False
                             
-                            _result = config.export_plugins(output_dir, push_images=False)
+                            _result = config.export_plugins(output_dir)
                             
                             env = mock_run_cmd.call_args[1]["env"]
                             assert env["INPUTS_IMAGE_REPOSITORY_PREFIX"] == "localhost/default"
@@ -137,7 +140,7 @@ class TestExportPlugins:
         
         with patch.object(Path, "exists", return_value=False):
             with pytest.raises(ExecutionError, match="Script not found"):
-                config.export_plugins(output_dir, push_images=False)
+                config.export_plugins(output_dir)
     
     def test_export_plugins_no_plugins_list(self, make_config, setup_test_env):
         """Test that export_plugins raises PluginFactoryError when plugins-list.yaml doesn't exist."""
@@ -160,7 +163,7 @@ class TestExportPlugins:
         with patch.object(Path, "exists", new=path_exists_side_effect):
             with patch("os.path.exists", side_effect=os_exists_side_effect):
                 with pytest.raises(PluginFactoryError, match="No plugins file found"):
-                    config.export_plugins(output_dir, push_images=False)
+                    config.export_plugins(output_dir)
     
     def test_export_plugins_script_fails(self, make_config, setup_test_env):
         """Test that export_plugins raises ExecutionError when script returns non-zero exit code."""
@@ -178,7 +181,7 @@ class TestExportPlugins:
                         mock_run_cmd.return_value = 1
                         
                         with pytest.raises(ExecutionError, match="exit code 1"):
-                            config.export_plugins(output_dir, push_images=False)
+                            config.export_plugins(output_dir)
     
     def test_export_plugins_has_failures(self, make_config, setup_test_env):
         """Test that export_plugins raises ExecutionError when display_export_results indicates failures."""
@@ -198,7 +201,7 @@ class TestExportPlugins:
                             mock_display.return_value = True
                             
                             with pytest.raises(ExecutionError, match="completed with failures"):
-                                config.export_plugins(output_dir, push_images=False)
+                                config.export_plugins(output_dir)
     
     def test_export_plugins_exception(self, make_config, setup_test_env):
         """Test that export_plugins wraps exceptions in ExecutionError."""
@@ -213,7 +216,7 @@ class TestExportPlugins:
                         mock_run_cmd.side_effect = Exception("Test exception")
                         
                         with pytest.raises(ExecutionError, match="Failed to run export script.*Test exception"):
-                            config.export_plugins(output_dir, push_images=False)
+                            config.export_plugins(output_dir)
     
     def test_export_plugins_custom_env_file(self, make_config, setup_test_env):
         """Test that export_plugins loads custom .env file from config directory."""
@@ -236,7 +239,7 @@ class TestExportPlugins:
                                 mock_run_cmd.return_value = 0
                                 mock_display.return_value = False
                                 
-                                _result = config.export_plugins(output_dir, push_images=False)
+                                _result = config.export_plugins(output_dir)
                                 
                                 assert mock_load_dotenv.call_count >= 1
                                 

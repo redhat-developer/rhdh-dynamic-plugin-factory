@@ -63,7 +63,7 @@ Examples:
     parser.add_argument(
         "--workspace-path",
         type=Path,
-        help="Path to the workspace from root of the repository"
+        help="Path to the workspace from root of the repository. Required if `source.json` is not provided."
     )
     parser.add_argument(
         "--push-images",
@@ -151,9 +151,8 @@ def _run(args: argparse.Namespace) -> None:
     """
     logger.info("[bold blue]Setting up configuration directory[/bold blue]")
 
-    config = PluginFactoryConfig.load_from_env(args=args, env_file=args.config_dir / ".env")
+    config = PluginFactoryConfig.load_from_env(args=args, env_file=args.config_dir / ".env", push_images=args.push_images)
 
-    config.load_registry_config(push_images=args.push_images)
     source_config = config.setup_config_directory()
 
     if source_config and not config.use_local:
@@ -183,7 +182,7 @@ def _run(args: argparse.Namespace) -> None:
     install_dependencies(workspace_path)
 
     logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
-    config.export_plugins(args.output_dir, args.push_images)
+    config.export_plugins(args.output_dir)
 
 
 def main():

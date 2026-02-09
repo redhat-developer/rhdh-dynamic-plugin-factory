@@ -18,7 +18,8 @@ class TestSourceConfigFromFile:
         """Test loading valid source.json with all required fields."""
         source_data = {
             "repo": "https://github.com/awslabs/backstage-plugins-for-aws",
-            "repo-ref": "78df9399a81cfd95265cab53815f54210b1d7f50"
+            "repo-ref": "78df9399a81cfd95265cab53815f54210b1d7f50",
+            "workspace-path": "."
         }
         
         source_file = tmp_path / "source.json"
@@ -45,7 +46,8 @@ class TestSourceConfigFromFile:
         """Test that empty repo field raises ConfigurationError."""
         source_data = {
             "repo": "",
-            "repo-ref": "main"
+            "repo-ref": "main",
+            "workspace-path": "."
         }
         
         source_file = tmp_path / "source.json"
@@ -58,7 +60,8 @@ class TestSourceConfigFromFile:
         """Test that empty repo_ref field raises ConfigurationError."""
         source_data = {
             "repo": "https://github.com/test/repo",
-            "repo-ref": ""
+            "repo-ref": "",
+            "workspace-path": "."
         }
         
         source_file = tmp_path / "source.json"
@@ -70,7 +73,8 @@ class TestSourceConfigFromFile:
     def test_from_file_missing_repo_ref(self, tmp_path):
         """Test that missing repo_ref field raises ConfigurationError."""
         source_data = {
-            "repo": "https://github.com/test/repo"
+            "repo": "https://github.com/test/repo",
+            "workspace-path": "."
         }
         
         source_file = tmp_path / "source.json"
@@ -103,7 +107,8 @@ class TestSourceConfigCloneToPath:
         """Test successful clone with mock git commands."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
         
         repo_path = tmp_path / "repo"
@@ -132,7 +137,8 @@ class TestSourceConfigCloneToPath:
         """Test that non-existent repo_path raises ConfigurationError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
         
         repo_path = tmp_path / "nonexistent"
@@ -144,7 +150,8 @@ class TestSourceConfigCloneToPath:
         """Test that clone failure raises ExecutionError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
         
         repo_path = tmp_path / "repo"
@@ -160,7 +167,8 @@ class TestSourceConfigCloneToPath:
         """Test that checkout failure raises ExecutionError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
         
         repo_path = tmp_path / "repo"
@@ -177,7 +185,8 @@ class TestSourceConfigCloneToPath:
         """Test that exceptions are wrapped in ExecutionError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
         
         repo_path = tmp_path / "repo"
@@ -197,7 +206,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that clean=True automatically cleans a non-empty directory without prompting."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -218,7 +228,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that clean=True does not call input() for user confirmation."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -238,7 +249,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that clean=False prompts user and proceeds when user enters 'y'."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -258,7 +270,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that clean=False prompts user and raises PluginFactoryError when user declines."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -275,7 +288,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that clean=False raises PluginFactoryError when user presses Enter without typing anything."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -290,7 +304,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that an empty directory skips both clean and prompt logic."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -311,7 +326,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that an empty directory with clean=False does not prompt user."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -330,7 +346,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that the clean parameter defaults to False."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -346,7 +363,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that after cleaning, git clone and checkout are executed."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="v1.0.0"
+            repo_ref="v1.0.0",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -373,7 +391,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that after user confirms 'y', git clone and checkout are executed."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
@@ -393,7 +412,8 @@ class TestSourceConfigCloneToPathClean:
         """Test that when user declines, git clone is not executed."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main"
+            repo_ref="main",
+            workspace_path="."
         )
 
         repo_path = tmp_path / "repo"
