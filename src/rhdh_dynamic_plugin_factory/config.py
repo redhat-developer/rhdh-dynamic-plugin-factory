@@ -5,7 +5,6 @@ Configuration management for RHDH Plugin Factory.
 import argparse
 import os
 from pathlib import Path
-import sys
 from typing import Dict, Optional
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
@@ -13,6 +12,7 @@ import yaml
 import json
 import subprocess
 
+from .exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 from .logger import get_logger
 from .utils import clean_directory, run_command_with_streaming, display_export_results
 
@@ -86,14 +86,14 @@ class PluginFactoryConfig:
             os.makedirs(dir_path, exist_ok=True)
         
         if not config.rhdh_cli_version:
-            raise ValueError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
+            raise ConfigurationError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
         
         if not config.workspace_path:
-            raise ValueError("WORKSPACE_PATH must be set via environment variable or --workspace-path argument")
+            raise ConfigurationError("WORKSPACE_PATH must be set via environment variable or --workspace-path argument")
         
         valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if config.log_level.upper() not in valid_log_levels:
-            raise ValueError(f"Invalid log level: {config.log_level}")
+            raise ConfigurationError(f"Invalid log level: {config.log_level}")
         
         config._validate_source_json()
         config._validate_plugins_list()
@@ -111,13 +111,13 @@ class PluginFactoryConfig:
             return
             
         if not self.registry_url:
-            raise ValueError("REGISTRY_URL environment variable is required when --push-images is enabled")
+            raise ConfigurationError("REGISTRY_URL environment variable is required when --push-images is enabled")
         
         if not self.registry_namespace:
-            raise ValueError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
+            raise ConfigurationError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
         
         if not self.registry_username or not self.registry_password:
-            raise ValueError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
+            raise ConfigurationError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
         ## TODO: Add support for token logins for ghcr.io registry as well
 
         try:
@@ -150,7 +150,7 @@ class PluginFactoryConfig:
         
         if not os.path.exists(source_file):
             if not os.path.exists(self.repo_path) or not os.listdir(self.repo_path):
-                raise ValueError(
+                raise ConfigurationError(
                     f"source.json not found at {source_file} and {self.repo_path} is empty. "
                     "Please provide source.json to clone a repository or use --use-local with a locally mounted repository."
                 )
@@ -172,31 +172,34 @@ class PluginFactoryConfig:
         else:
             self.logger.debug(f"Using plugins-list.yaml from: {plugins_file}")
     
-    def auto_generate_plugins_list(self) -> bool:
+    def auto_generate_plugins_list(self) -> None:
         """
-        Auto-generate plugins-list.yaml
+        Auto-generate plugins-list.yaml if it doesn't already exist.
+
         Assumes the following:
         - The repository is cloned to the `repo_path`
         - The plugins are located in the plugins/* directory
         - `workspace_path` is the path to the workspace from the root of the repository
+
+        Raises:
+            PluginFactoryError: If auto-generation fails.
         """
         plugins_file = os.path.join(self.config_dir, "plugins-list.yaml")
         
         if os.path.exists(plugins_file):
             self.logger.debug(f"[green]✓ plugins-list.yaml already exists at {plugins_file}. Skipping auto-generation.[/green]")
-            return True
+            return
         
         self.logger.info("[bold blue]Auto-generating plugins-list.yaml[/bold blue]")
         
+        if not os.path.exists(self.repo_path):
+            raise PluginFactoryError(f"Repository does not exist at {self.repo_path}")
+
+        workspace_full_path = os.path.abspath(os.path.join(self.repo_path, self.workspace_path))
+        if not os.path.exists(workspace_full_path):
+            raise PluginFactoryError(f"Workspace does not exist at {workspace_full_path}")
+        
         try:
-            if not os.path.exists(self.repo_path):
-                self.logger.error(f"[red]Repository does not exist at {self.repo_path}[/red]")
-                return False
-            workspace_full_path = os.path.abspath(os.path.join(self.repo_path, self.workspace_path))
-            if not os.path.exists(workspace_full_path):
-                self.logger.error(f"[red]Workspace does not exist at {workspace_full_path}[/red]")
-                return False
-            
             # TODO: Implement PluginListConfig.create_default function
             plugin_cfg = PluginListConfig.create_default(workspace_path=Path(workspace_full_path))
             plugin_cfg.to_file(Path(plugins_file))
@@ -208,33 +211,34 @@ class PluginFactoryConfig:
                     self.logger.info(f"  - {plugin_path}: {build_args}")
             else:
                 self.logger.warning("No plugins found in workspace")
-            
-            return True
-            
+        except PluginFactoryError:
+            raise
         except Exception as e:
-            self.logger.error(f"Failed to auto-generate plugins list: {e}")
-            return False
+            raise PluginFactoryError(f"Failed to auto-generate plugins list: {e}") from e
     
     def discover_source_config(self) -> Optional["SourceConfig"]:
-        """Discovers and loads source configuration from config_dir/source.json."""
+        """Discovers and loads source configuration from config_dir/source.json.
+
+        Returns:
+            SourceConfig if source.json exists and is valid, None if falling back to local repo.
+
+        Raises:
+            ConfigurationError: If source.json is invalid or no valid source is available.
+        """
         source_file = os.path.join(self.config_dir, "source.json")
 
         if os.path.exists(source_file) and not self.use_local:
-            try:
-                source_config = SourceConfig.from_file(Path(source_file))
-                self.logger.debug(f"Using source config from: {source_config}")
-                return source_config
-            except Exception as e:
-                self.logger.error(f"[red]Failed to load {source_file}: {e}[/red]")
-                sys.exit(1)
+            # SourceConfig.from_file() raises ConfigurationError on failure, so let it propagate to cli.py
+            source_config = SourceConfig.from_file(Path(source_file))
+            self.logger.debug(f"Using source config from: {source_config}")
+            return source_config
         elif self.repo_path and os.path.exists(self.repo_path):
             self.logger.warning("Source configuration not found, will attempt to use locally stored plugin source code")
         else:
-            self.logger.error(
-                f"[red]No valid source configuration found and {self.repo_path} is empty or does not exist[/red]"
+            raise ConfigurationError(
+                f"No valid source configuration found and {self.repo_path} is empty or does not exist. "
                 f"Either provide a valid {source_file} or ensure locally stored plugin source code exists at {self.repo_path}"
             )
-            sys.exit(1)
         return None
     
     
@@ -267,14 +271,21 @@ class PluginFactoryConfig:
             self.logger.warning(f"{plugins_list_file} not found, will auto-generate after repository is available")
         return source_config
     
-    def apply_patches_and_overlays(self) -> bool:
-        """Apply patches and overlays using override-sources.sh script."""
+    def apply_patches_and_overlays(self) -> None:
+        """Apply patches and overlays using override-sources.sh script.
+
+        Raises:
+            ExecutionError: If the patch script is not found or fails.
+        """
         script_dir = Path(__file__).parent.parent.parent / "scripts"
         script_path = script_dir / "override-sources.sh"
+        STEP_NAME = "apply patches and overlays"
         
         if not script_path.exists():
-            self.logger.error(f"[red]Script not found: {script_path}[/red]")
-            return False
+            raise ExecutionError(
+                f"Script not found: {script_path}",
+                step=STEP_NAME
+            )
         
         workspace_full_path = os.path.abspath(os.path.join(self.repo_path, self.workspace_path))
         self.logger.debug(f"Applying patches and overlays to workspace: {workspace_full_path}")
@@ -294,29 +305,41 @@ class PluginFactoryConfig:
             
             if returncode == 0:
                 self.logger.info("[green]Patches and overlays applied successfully[/green]")
-                return True
             else:
-                self.logger.error(f"[red]Patches/overlays failed with exit code {returncode}[/red]")
-                return False
-                
+                raise ExecutionError(
+                    f"Patches/overlays failed with exit code {returncode}",
+                    step=STEP_NAME,
+                    returncode=returncode
+                )
+        except ExecutionError:
+            raise
         except Exception as e:
-            self.logger.error(f"[red]Failed to run patch script: {e}[/red]")
-            return False
+            raise ExecutionError(
+                f"Failed to run patch script: {e}",
+                step=STEP_NAME
+            ) from e
     
-    def export_plugins(self, output_dir: str, push_images: bool) -> bool:
-        """Export plugins using export-workspace.sh script."""        
+    def export_plugins(self, output_dir: str, push_images: bool) -> None:
+        """Export plugins using export-workspace.sh script.
+
+        Raises:
+            ExecutionError: If the export script is not found or fails.
+            ConfigurationError: If no plugins list file is found.
+        """
         script_dir = Path(__file__).parent.parent.parent / "scripts"
         script_path = script_dir / "export-workspace.sh"
+        STEP_NAME = "export plugins"
         
         if not script_path.exists():
-            self.logger.error(f"[red]Script not found: {script_path}[/red]")
-            return False
+            raise ExecutionError(
+                f"Script not found: {script_path}",
+                step=STEP_NAME
+            )
         
         plugins_list_file = os.path.join(self.config_dir, "plugins-list.yaml")
         
         if not os.path.exists(plugins_list_file):
-            self.logger.error("[red]No plugins file found[/red]")
-            return False    
+            raise ConfigurationError("No plugins file found")
 
         config_env_file = os.path.join(self.config_dir, ".env")
         default_env_file = Path(__file__).parent.parent.parent / "default.env"
@@ -364,21 +387,29 @@ class PluginFactoryConfig:
             )
             
             if returncode != 0:
-                self.logger.error(f"[red]Plugin export script failed with exit code {returncode}[/red]")
-                return False
+                raise ExecutionError(
+                    f"Plugin export script failed with exit code {returncode}",
+                    step=STEP_NAME,
+                    returncode=returncode
+                )
             
             has_failures = display_export_results(Path(workspace_full_path), self.logger)
             
             if has_failures:
-                self.logger.error("[red]Plugin export completed with failures[/red]")
-                return False
-            else:
-                self.logger.info("[green]Plugin export completed successfully[/green]")
-                return True
+                raise ExecutionError(
+                    "Plugin export completed with failures",
+                    step=STEP_NAME,
+                )
 
+            self.logger.info("[green]Plugin export completed successfully[/green]")
+
+        except ExecutionError:
+            raise
         except Exception as e:
-            self.logger.error(f"[red]Failed to run export script: {e}[/red]")
-            return False
+            raise ExecutionError(
+                f"Failed to run export script: {e}",
+                step=STEP_NAME,
+            ) from e
 
 
 @dataclass
@@ -391,22 +422,26 @@ class SourceConfig:
 
     @classmethod
     def from_file(cls, source_file: Path) -> "SourceConfig":
-        """Load source configuration from JSON file."""
+        """Load source configuration from JSON file.
+
+        Raises:
+            ConfigurationError: If the file is missing, malformed, or has invalid data.
+        """
         try:
             with open(source_file, 'r') as f:
                 data = json.load(f)
         except FileNotFoundError:
-            raise ValueError(f"Source configuration file not found: {source_file}")
+            raise ConfigurationError(f"Source configuration file not found: {source_file}")
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in {source_file}: {e}")
+            raise ConfigurationError(f"Invalid JSON in {source_file}: {e}")
         except Exception as e:
-            raise ValueError(f"Failed to read {source_file}: {e}")
+            raise ConfigurationError(f"Failed to read {source_file}: {e}")
 
         try:
             repo = data["repo"]
             repo_ref = data.get("repo-ref")
         except KeyError as e:
-            raise ValueError(f"Missing required field {e} in {source_file}")
+            raise ConfigurationError(f"Missing required field {e} in {source_file}")
         
         config = cls(
             repo=repo,
@@ -414,19 +449,24 @@ class SourceConfig:
         )
 
         if not config.repo:
-            raise ValueError("repo is required")
+            raise ConfigurationError("repo is required")
         if not config.repo_ref:
-            raise ValueError("repo_ref is required")
+            raise ConfigurationError("repo_ref is required")
         
         return config
     
-    def clone_to_path(self, repo_path: Path, clean: bool = False) -> bool:
-        """Clone the source repository to the specified path."""
+    def clone_to_path(self, repo_path: Path, clean: bool = False) -> None:
+        """Clone the source repository to the specified path.
+
+        Raises:
+            ConfigurationError: If the destination directory does not exist.
+            PluginFactoryError: If the user aborts the clone.
+            ExecutionError: If git clone or checkout fails.
+        """
         logger = get_logger("cli")
         
         if not repo_path.exists():
-            self.logger.error(f"[red]Destination directory does not exist: {repo_path}[/red]")
-            return True
+            raise ConfigurationError(f"Destination directory does not exist: {repo_path}")
                 
         self.logger.info("[bold blue]Cloning repository[/bold blue]")
         self.logger.info(f"Repository: {self.repo}")
@@ -443,7 +483,7 @@ class SourceConfig:
                 confirm = input()
                 if confirm != "y":
                     self.logger.warning("[yellow]Aborted[/yellow]")
-                    return False
+                    raise PluginFactoryError("Repository clone aborted by user")
                 else:
                     self.logger.warning(f"[yellow]`y` selected. Cleaning {repo_path}. Note: you can use the `--clean` argument to automatically clean the directory and skip this prompt next time.[/yellow]")
                     clean_directory(repo_path)
@@ -458,8 +498,11 @@ class SourceConfig:
             )
             
             if returncode != 0:
-                logger.error(f"Failed to clone repository (exit code {returncode})")
-                return False
+                raise ExecutionError(
+                    f"Failed to clone repository (exit code {returncode})",
+                    step="git clone",
+                    returncode=returncode
+                )
             
             if self.repo_ref:
                 cmd = ["git", "checkout", self.repo_ref]
@@ -473,15 +516,21 @@ class SourceConfig:
                 )
                 
                 if returncode != 0:
-                    logger.error(f"Failed to checkout ref {self.repo_ref} (exit code {returncode})")
-                    return False
+                    raise ExecutionError(
+                        f"Failed to checkout ref {self.repo_ref} (exit code {returncode})",
+                        step="git checkout",
+                        returncode=returncode
+                    )
             
             logger.info("[green]✓ Repository cloned successfully[/green]")
-            return True
-            
+
+        except PluginFactoryError:
+            raise
         except Exception as e:
-            logger.error(f"Failed to clone repository: {e}")
-            return False
+            raise ExecutionError(
+                f"Failed during repository clone/checkout: {e}",
+                step="git clone/checkout"
+            ) from e
 
 class PluginListConfig:
     """Configuration for plugin list (YAML format)."""

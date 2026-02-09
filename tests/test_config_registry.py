@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+from src.rhdh_dynamic_plugin_factory.exceptions import ConfigurationError
 
 
 class TestLoadRegistryConfig:
@@ -25,17 +26,17 @@ class TestLoadRegistryConfig:
             )
     
     def test_missing_registry_url(self, make_config):
-        """Test that missing REGISTRY_URL raises ValueError when push_images is True."""
+        """Test that missing REGISTRY_URL raises ConfigurationError when push_images is True."""
         config = make_config(registry_url=None, registry_namespace="test-namespace")
         
-        with pytest.raises(ValueError, match="REGISTRY_URL environment variable is required"):
+        with pytest.raises(ConfigurationError, match="REGISTRY_URL environment variable is required"):
             config.load_registry_config(push_images=True)
     
     def test_missing_registry_namespace(self, make_config):
-        """Test that missing REGISTRY_NAMESPACE raises ValueError when push_images is True."""
+        """Test that missing REGISTRY_NAMESPACE raises ConfigurationError when push_images is True."""
         config = make_config(registry_url="quay.io", registry_namespace=None)
         
-        with pytest.raises(ValueError, match="REGISTRY_NAMESPACE environment variable is required"):
+        with pytest.raises(ConfigurationError, match="REGISTRY_NAMESPACE environment variable is required"):
             config.load_registry_config(push_images=True)
     
     def test_successful_buildah_login(self, make_config):
@@ -99,7 +100,7 @@ class TestLoadRegistryConfig:
                 assert "Authentication failed" in warning_call
     
     def test_missing_registry_credentials(self, make_config):
-        """Test that missing credentials raise ValueError when push_images is True."""
+        """Test that missing credentials raise ConfigurationError when push_images is True."""
         config = make_config(
             registry_url="quay.io",
             registry_namespace="test-namespace",
@@ -108,11 +109,11 @@ class TestLoadRegistryConfig:
             registry_insecure=False
         )
         
-        with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
+        with pytest.raises(ConfigurationError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
             config.load_registry_config(push_images=True)
     
     def test_missing_registry_username(self, make_config):
-        """Test that missing username raises ValueError when push_images is True."""
+        """Test that missing username raises ConfigurationError when push_images is True."""
         config = make_config(
             registry_url="quay.io",
             registry_namespace="test-namespace",
@@ -121,11 +122,11 @@ class TestLoadRegistryConfig:
             registry_insecure=False
         )
         
-        with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
+        with pytest.raises(ConfigurationError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
             config.load_registry_config(push_images=True)
     
     def test_missing_registry_password(self, make_config):
-        """Test that missing password raises ValueError when push_images is True."""
+        """Test that missing password raises ConfigurationError when push_images is True."""
         config = make_config(
             registry_url="quay.io",
             registry_namespace="test-namespace",
@@ -134,7 +135,7 @@ class TestLoadRegistryConfig:
             registry_insecure=False
         )
         
-        with pytest.raises(ValueError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
+        with pytest.raises(ConfigurationError, match="REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required"):
             config.load_registry_config(push_images=True)
     
     def test_insecure_registry_flag(self, make_config):

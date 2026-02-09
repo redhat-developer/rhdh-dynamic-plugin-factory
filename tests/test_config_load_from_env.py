@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+from src.rhdh_dynamic_plugin_factory.exceptions import ConfigurationError
 
 
 class TestPluginFactoryConfigLoadFromEnv:
@@ -48,7 +49,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert isinstance(config.workspace_path, str)
     
     def test_load_from_env_missing_rhdh_cli_version(self, mock_args, setup_test_env, clean_env):
-        """Test that missing RHDH_CLI_VERSION raises ValueError."""
+        """Test that missing RHDH_CLI_VERSION raises ConfigurationError."""
         # Don't set RHDH_CLI_VERSION
         clean_env.setenv("WORKSPACE_PATH", ".")
         
@@ -58,11 +59,11 @@ class TestPluginFactoryConfigLoadFromEnv:
         
         # Patch to prevent loading from default.env
         with patch.object(Path, 'exists', return_value=False):
-            with pytest.raises(ValueError, match="RHDH_CLI_VERSION must be set"):
+            with pytest.raises(ConfigurationError, match="RHDH_CLI_VERSION must be set"):
                 PluginFactoryConfig.load_from_env(mock_args)
     
     def test_load_from_env_invalid_log_level(self, mock_args, setup_test_env, monkeypatch):
-        """Test that invalid log level raises ValueError."""
+        """Test that invalid log level raises ConfigurationError."""
         # Set required environment variables
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
         monkeypatch.setenv("WORKSPACE_PATH", ".")
@@ -73,7 +74,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         mock_args.workspace_path = "."
         mock_args.log_level = "INVALID_LEVEL"
         
-        with pytest.raises(ValueError, match="Invalid log level"):
+        with pytest.raises(ConfigurationError, match="Invalid log level"):
             PluginFactoryConfig.load_from_env(mock_args)
     
     @pytest.mark.parametrize("log_level", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
@@ -152,7 +153,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config.registry_namespace == "test-namespace"
     
     def test_load_from_env_missing_workspace_path(self, mock_args, setup_test_env, monkeypatch):
-        """Test that missing workspace_path raises ValueError."""
+        """Test that missing workspace_path raises ConfigurationError."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
         # Don't set WORKSPACE_PATH env var to test fallback
         monkeypatch.delenv("WORKSPACE_PATH", raising=False)
@@ -162,8 +163,8 @@ class TestPluginFactoryConfigLoadFromEnv:
         mock_args.workspace_path = None  # Missing workspace_path
         
         # When workspace_path is None and WORKSPACE_PATH env var is not set,
-        # validation should raise ValueError
-        with pytest.raises(ValueError, match="WORKSPACE_PATH must be set"):
+        # validation should raise ConfigurationError
+        with pytest.raises(ConfigurationError, match="WORKSPACE_PATH must be set"):
             PluginFactoryConfig.load_from_env(mock_args)
     
     def test_load_from_env_directory_creation(self, mock_args, tmp_path, monkeypatch):
@@ -246,7 +247,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config.use_local is True
     
     def test_load_from_env_source_json_missing_repo_path_empty(self, mock_args, tmp_path, monkeypatch):
-        """Test that missing source.json with empty repo_path raises ValueError."""
+        """Test that missing source.json with empty repo_path raises ConfigurationError."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
         monkeypatch.setenv("WORKSPACE_PATH", ".")
         
@@ -262,7 +263,7 @@ class TestPluginFactoryConfigLoadFromEnv:
         mock_args.repo_path = str(repo_path)
         mock_args.workspace_path = "."
         
-        with pytest.raises(ValueError, match="source.json not found"):
+        with pytest.raises(ConfigurationError, match="source.json not found"):
             PluginFactoryConfig.load_from_env(mock_args)
     
     def test_load_from_env_source_json_missing_repo_path_has_content(self, mock_args, tmp_path, monkeypatch):

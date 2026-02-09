@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from src.rhdh_dynamic_plugin_factory.config import SourceConfig
+from src.rhdh_dynamic_plugin_factory.exceptions import ConfigurationError, ExecutionError, PluginFactoryError
 
 class TestSourceConfigFromFile:
     """Tests for SourceConfig.from_file method."""
@@ -29,7 +30,7 @@ class TestSourceConfigFromFile:
         assert config.repo_ref == "78df9399a81cfd95265cab53815f54210b1d7f50"
     
     def test_from_file_missing_repo(self, tmp_path):
-        """Test that missing repo field raises ValueError with descriptive message."""
+        """Test that missing repo field raises ConfigurationError with descriptive message."""
         source_data = {
             "repo-ref": "main"
         }
@@ -37,11 +38,11 @@ class TestSourceConfigFromFile:
         source_file = tmp_path / "source.json"
         source_file.write_text(json.dumps(source_data))
         
-        with pytest.raises(ValueError, match="Missing required field"):
+        with pytest.raises(ConfigurationError, match="Missing required field"):
             SourceConfig.from_file(source_file)
     
     def test_from_file_empty_repo(self, tmp_path):
-        """Test that empty repo field raises ValueError."""
+        """Test that empty repo field raises ConfigurationError."""
         source_data = {
             "repo": "",
             "repo-ref": "main"
@@ -50,11 +51,11 @@ class TestSourceConfigFromFile:
         source_file = tmp_path / "source.json"
         source_file.write_text(json.dumps(source_data))
         
-        with pytest.raises(ValueError, match="repo is required"):
+        with pytest.raises(ConfigurationError, match="repo is required"):
             SourceConfig.from_file(source_file)
     
     def test_from_file_empty_repo_ref(self, tmp_path):
-        """Test that empty repo_ref field raises ValueError."""
+        """Test that empty repo_ref field raises ConfigurationError."""
         source_data = {
             "repo": "https://github.com/test/repo",
             "repo-ref": ""
@@ -63,11 +64,11 @@ class TestSourceConfigFromFile:
         source_file = tmp_path / "source.json"
         source_file.write_text(json.dumps(source_data))
         
-        with pytest.raises(ValueError, match="repo_ref is required"):
+        with pytest.raises(ConfigurationError, match="repo_ref is required"):
             SourceConfig.from_file(source_file)
     
     def test_from_file_missing_repo_ref(self, tmp_path):
-        """Test that missing repo_ref field raises ValueError."""
+        """Test that missing repo_ref field raises ConfigurationError."""
         source_data = {
             "repo": "https://github.com/test/repo"
         }
@@ -75,23 +76,23 @@ class TestSourceConfigFromFile:
         source_file = tmp_path / "source.json"
         source_file.write_text(json.dumps(source_data))
         
-        # repo_ref is now required and will raise ValueError if missing/None
-        with pytest.raises(ValueError, match="repo_ref is required"):
+        # repo_ref is now required and will raise ConfigurationError if missing/None
+        with pytest.raises(ConfigurationError, match="repo_ref is required"):
             SourceConfig.from_file(source_file)
     
     def test_from_file_malformed_json(self, tmp_path):
-        """Test that malformed JSON raises ValueError with descriptive message."""
+        """Test that malformed JSON raises ConfigurationError with descriptive message."""
         source_file = tmp_path / "source.json"
         source_file.write_text("{ invalid json }")
         
-        with pytest.raises(ValueError, match="Invalid JSON"):
+        with pytest.raises(ConfigurationError, match="Invalid JSON"):
             SourceConfig.from_file(source_file)
     
     def test_from_file_nonexistent_file(self, tmp_path):
-        """Test that nonexistent file raises ValueError with descriptive message."""
+        """Test that nonexistent file raises ConfigurationError with descriptive message."""
         source_file = tmp_path / "nonexistent.json"
         
-        with pytest.raises(ValueError, match="Source configuration file not found"):
+        with pytest.raises(ConfigurationError, match="Source configuration file not found"):
             SourceConfig.from_file(source_file)
 
 
@@ -111,9 +112,8 @@ class TestSourceConfigCloneToPath:
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
             mock_run.return_value = 0
             
-            result = config.clone_to_path(repo_path)
+            config.clone_to_path(repo_path)  # Should not raise any exceptions
             
-            assert result is True
             assert mock_run.call_count == 2  # clone + checkout
             
             # Verify clone command
@@ -129,7 +129,7 @@ class TestSourceConfigCloneToPath:
             assert checkout_call[0][0][2] == "main"
     
     def test_clone_to_path_repo_path_does_not_exist(self, tmp_path):
-        """Test that non-existent repo_path returns True early."""
+        """Test that non-existent repo_path raises ConfigurationError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
             repo_ref="main"
@@ -137,13 +137,11 @@ class TestSourceConfigCloneToPath:
         
         repo_path = tmp_path / "nonexistent"
         
-        result = config.clone_to_path(repo_path)
-        
-        # According to the code, it returns True if repo_path doesn't exist
-        assert result is True
+        with pytest.raises(ConfigurationError, match="Destination directory does not exist"):
+            config.clone_to_path(repo_path)
     
     def test_clone_to_path_clone_fails(self, tmp_path):
-        """Test that clone failure returns False."""
+        """Test that clone failure raises ExecutionError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
             repo_ref="main"
@@ -155,12 +153,11 @@ class TestSourceConfigCloneToPath:
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
             mock_run.return_value = 1  # Failed
             
-            result = config.clone_to_path(repo_path)
-            
-            assert result is False
+            with pytest.raises(ExecutionError, match="Failed to clone repository"):
+                config.clone_to_path(repo_path)
     
     def test_clone_to_path_checkout_fails(self, tmp_path):
-        """Test that checkout failure returns False."""
+        """Test that checkout failure raises ExecutionError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
             repo_ref="main"
@@ -173,12 +170,11 @@ class TestSourceConfigCloneToPath:
             # First call (clone) succeeds, second call (checkout) fails
             mock_run.side_effect = [0, 1]
             
-            result = config.clone_to_path(repo_path)
-            
-            assert result is False
+            with pytest.raises(ExecutionError, match="Failed to checkout ref"):
+                config.clone_to_path(repo_path)
     
     def test_clone_to_path_exception(self, tmp_path):
-        """Test that exceptions return False."""
+        """Test that exceptions are wrapped in ExecutionError."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
             repo_ref="main"
@@ -190,9 +186,8 @@ class TestSourceConfigCloneToPath:
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
             mock_run.side_effect = Exception("Test exception")
             
-            result = config.clone_to_path(repo_path)
-            
-            assert result is False
+            with pytest.raises(ExecutionError, match="Failed during repository clone/checkout"):
+                config.clone_to_path(repo_path)
 
 
 class TestSourceConfigCloneToPathClean:
@@ -215,9 +210,8 @@ class TestSourceConfigCloneToPathClean:
              patch("src.rhdh_dynamic_plugin_factory.config.clean_directory") as mock_clean:
             mock_run.return_value = 0
 
-            result = config.clone_to_path(repo_path, clean=True)
+            config.clone_to_path(repo_path, clean=True)  # Should not raise any exceptions
 
-            assert result is True
             mock_clean.assert_called_once_with(repo_path)
 
     def test_clean_flag_does_not_prompt_user(self, tmp_path):
@@ -256,13 +250,12 @@ class TestSourceConfigCloneToPathClean:
              patch("builtins.input", return_value="y"):
             mock_run.return_value = 0
 
-            result = config.clone_to_path(repo_path, clean=False)
+            config.clone_to_path(repo_path, clean=False)  # Should not raise any exceptions
 
-            assert result is True
             mock_clean.assert_called_once_with(repo_path)
 
     def test_no_clean_flag_prompts_user_confirm_no(self, tmp_path):
-        """Test that clean=False prompts user and aborts when user enters anything other than 'y'."""
+        """Test that clean=False prompts user and raises PluginFactoryError when user declines."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
             repo_ref="main"
@@ -273,13 +266,13 @@ class TestSourceConfigCloneToPathClean:
         (repo_path / "existing_file.txt").write_text("existing content")
 
         with patch("builtins.input", return_value="n") as mock_input:
-            result = config.clone_to_path(repo_path, clean=False)
+            with pytest.raises(PluginFactoryError, match="aborted by user"):
+                config.clone_to_path(repo_path, clean=False)
 
-            assert result is False
             mock_input.assert_called_once()
 
     def test_no_clean_flag_prompts_user_empty_input_aborts(self, tmp_path):
-        """Test that clean=False aborts when user presses Enter without typing anything."""
+        """Test that clean=False raises PluginFactoryError when user presses Enter without typing anything."""
         config = SourceConfig(
             repo="https://github.com/testowner/testrepo",
             repo_ref="main"
@@ -290,9 +283,8 @@ class TestSourceConfigCloneToPathClean:
         (repo_path / "existing_file.txt").write_text("existing content")
 
         with patch("builtins.input", return_value=""):
-            result = config.clone_to_path(repo_path, clean=False)
-
-            assert result is False
+            with pytest.raises(PluginFactoryError, match="aborted by user"):
+                config.clone_to_path(repo_path, clean=False)
 
     def test_empty_directory_skips_clean_and_prompt(self, tmp_path):
         """Test that an empty directory skips both clean and prompt logic."""
@@ -310,9 +302,8 @@ class TestSourceConfigCloneToPathClean:
              patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
-            result = config.clone_to_path(repo_path, clean=True)
+            config.clone_to_path(repo_path, clean=True)  # Should not raise
 
-            assert result is True
             mock_clean.assert_not_called()
             mock_input.assert_not_called()
 
@@ -331,9 +322,8 @@ class TestSourceConfigCloneToPathClean:
              patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
-            result = config.clone_to_path(repo_path, clean=False)
+            config.clone_to_path(repo_path, clean=False)  # Should not raise any exceptions]
 
-            assert result is True
             mock_input.assert_not_called()
 
     def test_clean_flag_default_is_false(self, tmp_path):
@@ -348,10 +338,9 @@ class TestSourceConfigCloneToPathClean:
         (repo_path / "existing_file.txt").write_text("existing content")
 
         with patch("builtins.input", return_value="n"):
-            # Call without clean argument - should prompt (default clean=False)
-            result = config.clone_to_path(repo_path)
-
-            assert result is False
+            # Call without clean argument - should prompt and raise PluginFactoryError when user declines
+            with pytest.raises(PluginFactoryError, match="aborted by user"):
+                config.clone_to_path(repo_path)
 
     def test_clean_proceeds_with_clone_after_cleaning(self, tmp_path):
         """Test that after cleaning, git clone and checkout are executed."""
@@ -368,9 +357,8 @@ class TestSourceConfigCloneToPathClean:
              patch("src.rhdh_dynamic_plugin_factory.config.clean_directory"):
             mock_run.return_value = 0
 
-            result = config.clone_to_path(repo_path, clean=True)
+            config.clone_to_path(repo_path, clean=True)  # Should not raise any exceptions
 
-            assert result is True
             assert mock_run.call_count == 2  # clone + checkout
 
             # Verify clone command
@@ -397,9 +385,8 @@ class TestSourceConfigCloneToPathClean:
              patch("builtins.input", return_value="y"):
             mock_run.return_value = 0
 
-            result = config.clone_to_path(repo_path, clean=False)
+            config.clone_to_path(repo_path, clean=False)  # Should not raise any exceptions
 
-            assert result is True
             assert mock_run.call_count == 2  # clone + checkout
 
     def test_prompt_confirm_no_does_not_clone(self, tmp_path):
@@ -416,8 +403,8 @@ class TestSourceConfigCloneToPathClean:
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
              patch("builtins.input", return_value="n"):
 
-            result = config.clone_to_path(repo_path, clean=False)
+            with pytest.raises(PluginFactoryError, match="aborted by user"):
+                config.clone_to_path(repo_path, clean=False)
 
-            assert result is False
             mock_run.assert_not_called()
 

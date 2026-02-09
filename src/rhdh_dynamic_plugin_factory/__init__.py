@@ -13,6 +13,11 @@ from .config import (
     SourceConfig,
     PluginListConfig,
 )
+from .exceptions import (
+    PluginFactoryError,
+    ConfigurationError,
+    ExecutionError,
+)
 from .logger import (
     setup_logging,
     get_logger,
@@ -21,6 +26,7 @@ from .logger import (
 from .utils import (
     run_command_with_streaming,
     display_export_results,
+    clean_directory,
 )
 
 __all__ = [
@@ -33,6 +39,11 @@ __all__ = [
     "SourceConfig",
     "PluginListConfig",
     
+    # Exceptions
+    "PluginFactoryError",
+    "ConfigurationError",
+    "ExecutionError",
+    
     # Logging
     "setup_logging",
     "get_logger",
@@ -41,7 +52,7 @@ __all__ = [
     # Utilities
     "run_command_with_streaming",
     "display_export_results",
-    
+    "clean_directory",
     # Version
     "__version__",
 ]

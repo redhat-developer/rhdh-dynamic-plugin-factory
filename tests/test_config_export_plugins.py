@@ -8,9 +8,9 @@ and script execution.
 import os
 from pathlib import Path
 from unittest.mock import patch
+import pytest
 
-from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
-
+from src.rhdh_dynamic_plugin_factory.exceptions import ExecutionError, PluginFactoryError
 
 class TestExportPlugins:
     """Tests for PluginFactoryConfig.export_plugins method."""
@@ -32,9 +32,7 @@ class TestExportPlugins:
                             mock_run_cmd.return_value = 0
                             mock_display.return_value = False
                             
-                            result = config.export_plugins(output_dir, push_images=False)
-                            
-                            assert result is True
+                            config.export_plugins(output_dir, push_images=False)  # Should not raise any exceptions
                             
                             mock_run_cmd.assert_called_once()
                             call_args = mock_run_cmd.call_args
@@ -132,23 +130,17 @@ class TestExportPlugins:
                             assert env["INPUTS_IMAGE_REPOSITORY_PREFIX"] == "localhost/default"
     
     def test_export_plugins_script_not_found(self, make_config, setup_test_env):
-        """Test that export_plugins returns False when script doesn't exist."""
+        """Test that export_plugins raises ExecutionError when script doesn't exist."""
         config = make_config()
         
         output_dir = str(setup_test_env["tmp_path"] / "output")
         
         with patch.object(Path, "exists", return_value=False):
-            with patch.object(config, "logger") as mock_logger:
-                result = config.export_plugins(output_dir, push_images=False)
-                
-                assert result is False
-                
-                mock_logger.error.assert_called_once()
-                error_msg = mock_logger.error.call_args[0][0]
-                assert "Script not found" in error_msg
+            with pytest.raises(ExecutionError, match="Script not found"):
+                config.export_plugins(output_dir, push_images=False)
     
     def test_export_plugins_no_plugins_list(self, make_config, setup_test_env):
-        """Test that export_plugins returns False when plugins-list.yaml doesn't exist."""
+        """Test that export_plugins raises PluginFactoryError when plugins-list.yaml doesn't exist."""
         config = make_config()
         
         output_dir = str(setup_test_env["tmp_path"] / "output")
@@ -167,16 +159,11 @@ class TestExportPlugins:
         
         with patch.object(Path, "exists", new=path_exists_side_effect):
             with patch("os.path.exists", side_effect=os_exists_side_effect):
-                with patch.object(config, "logger") as mock_logger:
-                    result = config.export_plugins(output_dir, push_images=False)
-                    
-                    assert result is False
-                    
-                    error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
-                    assert any("No plugins file found" in str(call) for call in error_calls)
+                with pytest.raises(PluginFactoryError, match="No plugins file found"):
+                    config.export_plugins(output_dir, push_images=False)
     
     def test_export_plugins_script_fails(self, make_config, setup_test_env):
-        """Test that export_plugins returns False when script returns non-zero exit code."""
+        """Test that export_plugins raises ExecutionError when script returns non-zero exit code."""
         config = make_config(
             registry_url="quay.io",
             registry_namespace="test-namespace"
@@ -188,18 +175,13 @@ class TestExportPlugins:
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
                     with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                        with patch.object(config, "logger") as mock_logger:
-                            mock_run_cmd.return_value = 1
-                            
-                            result = config.export_plugins(output_dir, push_images=False)
-                            
-                            assert result is False
-                            
-                            error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
-                            assert any("exit code 1" in str(call) for call in error_calls)
+                        mock_run_cmd.return_value = 1
+                        
+                        with pytest.raises(ExecutionError, match="exit code 1"):
+                            config.export_plugins(output_dir, push_images=False)
     
     def test_export_plugins_has_failures(self, make_config, setup_test_env):
-        """Test that export_plugins returns False when display_export_results indicates failures."""
+        """Test that export_plugins raises ExecutionError when display_export_results indicates failures."""
         config = make_config(
             registry_url="quay.io",
             registry_namespace="test-namespace"
@@ -212,19 +194,14 @@ class TestExportPlugins:
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
                     with patch("src.rhdh_dynamic_plugin_factory.config.display_export_results") as mock_display:
                         with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                            with patch.object(config, "logger") as mock_logger:
-                                mock_run_cmd.return_value = 0
-                                mock_display.return_value = True
-                                
-                                result = config.export_plugins(output_dir, push_images=False)
-                                
-                                assert result is False
-                                
-                                error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
-                                assert any("completed with failures" in str(call) for call in error_calls)
+                            mock_run_cmd.return_value = 0
+                            mock_display.return_value = True
+                            
+                            with pytest.raises(ExecutionError, match="completed with failures"):
+                                config.export_plugins(output_dir, push_images=False)
     
     def test_export_plugins_exception(self, make_config, setup_test_env):
-        """Test that export_plugins handles exceptions gracefully."""
+        """Test that export_plugins wraps exceptions in ExecutionError."""
         config = make_config()
         
         output_dir = str(setup_test_env["tmp_path"] / "output")
@@ -233,17 +210,10 @@ class TestExportPlugins:
             with patch("os.path.exists", return_value=True):
                 with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run_cmd:
                     with patch("src.rhdh_dynamic_plugin_factory.config.load_dotenv"):
-                        with patch.object(config, "logger") as mock_logger:
-                            mock_run_cmd.side_effect = Exception("Test exception")
-                            
-                            result = config.export_plugins(output_dir, push_images=False)
-                            
-                            assert result is False
-                            
-                            mock_logger.error.assert_called()
-                            error_msg = mock_logger.error.call_args[0][0]
-                            assert "Failed to run export script" in error_msg
-                            assert "Test exception" in error_msg
+                        mock_run_cmd.side_effect = Exception("Test exception")
+                        
+                        with pytest.raises(ExecutionError, match="Failed to run export script.*Test exception"):
+                            config.export_plugins(output_dir, push_images=False)
     
     def test_export_plugins_custom_env_file(self, make_config, setup_test_env):
         """Test that export_plugins loads custom .env file from config directory."""

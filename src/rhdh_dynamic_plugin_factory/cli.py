@@ -13,6 +13,7 @@ try:
     from .logger import setup_logging, get_logger
     from .config import PluginFactoryConfig
     from .utils import run_command_with_streaming
+    from .exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 except ImportError:
     # For direct script execution, add parent directory to path
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,6 +21,7 @@ except ImportError:
     from rhdh_dynamic_plugin_factory.logger import setup_logging, get_logger
     from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
     from rhdh_dynamic_plugin_factory.utils import run_command_with_streaming
+    from rhdh_dynamic_plugin_factory.exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 
 logger = get_logger("cli")
 
@@ -94,10 +96,15 @@ Examples:
     )
     return parser
 
-def install_dependencies(workspace_path: Path) -> bool:
-    """Install dependencies in the workspace using yarn install with corepack."""
-    logger.info("[bold blue]Installing workspace dependencies[/bold blue]")
+def install_dependencies(workspace_path: Path) -> None:
+    """Install dependencies in the workspace using yarn install with corepack.
 
+    Raises:
+        ExecutionError: If any dependency installation step fails.
+    """
+    logger.info("[bold blue]Installing workspace dependencies[/bold blue]")
+    STEP_NAME = "install dependencies"
+    
     commands = [
         (["pwd"], "Checking workspace path"),
         (["corepack", "enable"], "Enabling corepack"),
@@ -121,69 +128,83 @@ def install_dependencies(workspace_path: Path) -> bool:
             )
             
             if returncode != 0:
-                logger.error(f"{description} failed with exit code {returncode}")
-                return False
+                raise ExecutionError(
+                    f"{description} failed with exit code {returncode}",
+                    step=STEP_NAME,
+                    returncode=returncode
+                )
             
             logger.info(f"[green]✓ {description} completed[/green]")
-        
-        return True
+    except ExecutionError:
+        raise
     except Exception as e:
-        logger.error(f"Failed to install dependencies: {e}")
-        return False
+        raise ExecutionError(
+            f"Failed to install dependencies: {e}",
+            step=STEP_NAME,
+        ) from e
 
-def main():
-    """Main entry point for the RHDH Dynamic Plugin Factory."""
-    parser = create_parser()
-    args = parser.parse_args()
-    setup_logging(level=args.log_level, verbose=args.verbose)
+def _run(args: argparse.Namespace) -> None:
+    """Execute the main plugin factory workflow.
+
+    All steps either succeed silently or raise a PluginFactoryError subclass,
+    which is caught by the centralized handler in main().
+    """
     logger.info("[bold blue]Setting up configuration directory[/bold blue]")
 
     config = PluginFactoryConfig.load_from_env(args=args, env_file=args.config_dir / ".env")
 
-    try:
-        config.load_registry_config(push_images=args.push_images)
-        source_config = config.setup_config_directory()
-    except Exception as e:
-        config.logger.error(f"[red]Configuration error: {e}[/red]")
-        sys.exit(1)
-    
+    config.load_registry_config(push_images=args.push_images)
+    source_config = config.setup_config_directory()
+
     if source_config and not config.use_local:
         logger.info("[bold blue]Repository Setup[/bold blue]")
-        if not source_config.clone_to_path(config.repo_path, clean=args.clean):
-            logger.error("Failed to clone repository")
-            sys.exit(1)
+        source_config.clone_to_path(config.repo_path, clean=args.clean)
     elif config.use_local or not source_config:
         if config.use_local:
             logger.info("[bold blue]--use-local flag is set, using local repository[/bold blue]")
         else:
             logger.info("[bold blue]No source configuration found, using local repository[/bold blue]")
         if not config.repo_path.exists():
-            logger.error(f"Local repository does not exist at: {config.repo_path}")
-            logger.error("Either provide source.json to clone the repository, or ensure workspace exists at directory specified by --repo-path")
-            sys.exit(1)
+            raise ConfigurationError(
+                f"Local repository does not exist at: {config.repo_path}. "
+                "Either provide source.json to clone the repository, "
+                "or ensure workspace exists at directory specified by --repo-path"
+            )
         logger.info(f"Using local repository at: {config.repo_path}")
-    
+
     # Auto-generate plugins-list.yaml if needed (after repository is available)
-    if not config.auto_generate_plugins_list():
-        logger.error("Failed to generate plugins list")
-        sys.exit(1)
+    config.auto_generate_plugins_list()
+
     logger.info("[bold blue]Applying Patches and Overlays[/bold blue]")
-    if not config.apply_patches_and_overlays():
-        logger.error("Failed to apply patches and overlays")
-        sys.exit(1)
+    config.apply_patches_and_overlays()
 
     logger.info("[bold blue]Installing Dependencies[/bold blue]")
-    
     workspace_path = config.repo_path.joinpath(config.workspace_path).absolute()
-    if not install_dependencies(workspace_path):
-        logger.error("Failed to install dependencies")
-        sys.exit(1)
-    
+    install_dependencies(workspace_path)
+
     logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
-    if not config.export_plugins(args.output_dir, args.push_images):
-        logger.error("Plugin export failed")
+    config.export_plugins(args.output_dir, args.push_images)
+
+
+def main():
+    """Main entry point for the RHDH Dynamic Plugin Factory."""
+    parser = create_parser()
+    args = parser.parse_args()
+    setup_logging(level=args.log_level, verbose=args.verbose)
+
+    try:
+        _run(args)
+    except ConfigurationError as e:
+        logger.error(f"[red]Configuration error: {e}[/red]")
         sys.exit(1)
-    
+    except ExecutionError as e:
+        step_info = f"{e.step}: " if e.step else ""
+        logger.error(f"[red]{step_info}{e}[/red]")
+        sys.exit(e.returncode or 1)
+    except PluginFactoryError as e:
+        logger.error(f"[red]{e}[/red]")
+        sys.exit(1)
+
     logger.info("[green]✓ All operations completed successfully[/green]")
 
 
