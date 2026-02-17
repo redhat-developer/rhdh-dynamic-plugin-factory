@@ -33,8 +33,11 @@ def create_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
         # Build plugins for the todo workspace in backstage/community-plugins w/o pushing to a registry
-        # This assumes that ./config is populated with the required source.json and plugins-list.yaml files
+        # This assumes that ./config is populated with the source.json and plugins-list.yaml files
         python src/rhdh_dynamic_plugin_factory --config-dir ./config --repo-path ./source --workspace-path workspaces/todo --log-level DEBUG --output-dir ./outputs
+
+        # Build plugins using CLI args instead of source.json
+        python src/rhdh_dynamic_plugin_factory --source-repo https://github.com/backstage/community-plugins --source-ref main --workspace-path workspaces/todo --config-dir ./config --repo-path ./source --output-dir ./outputs
         """
     )
     parser.add_argument(
@@ -63,7 +66,19 @@ Examples:
     parser.add_argument(
         "--workspace-path",
         type=Path,
-        help="Path to the workspace from root of the repository. Required if `source.json` is not provided."
+        help="Path to the workspace from root of the repository. Can also be provided via the source.json workspace-path field."
+    )
+    parser.add_argument(
+        "--source-repo",
+        type=str,
+        default=None,
+        help="Git repository URL. When provided, source.json is ignored and the repository is cloned from this URL."
+    )
+    parser.add_argument(
+        "--source-ref",
+        type=str,
+        default=None,
+        help="Git ref (branch/tag/commit) to check out. Optional: defaults to the repository's default branch. Requires --source-repo."
     )
     parser.add_argument(
         "--push-images",
@@ -155,6 +170,17 @@ def _run(args: argparse.Namespace) -> None:
 
     source_config = config.setup_config_directory()
 
+    # Resolve workspace_path from source_config if not set via CLI/env
+    if not config.workspace_path and source_config:
+        config.workspace_path = source_config.workspace_path
+    
+    # Validate workspace_path is set (may come from CLI, env var, or source.json)
+    if not config.workspace_path:
+        raise ConfigurationError(
+            "WORKSPACE_PATH must be set via --workspace-path argument, "
+            "WORKSPACE_PATH environment variable, or source.json workspace-path field"
+        )
+
     if source_config and not config.use_local:
         logger.info("[bold blue]Repository Setup[/bold blue]")
         source_config.clone_to_path(config.repo_path, clean=args.clean)
@@ -167,6 +193,7 @@ def _run(args: argparse.Namespace) -> None:
             raise ConfigurationError(
                 f"Local repository does not exist at: {config.repo_path}. "
                 "Either provide source.json to clone the repository, "
+                "use --source-repo to specify a repository via CLI, "
                 "or ensure workspace exists at directory specified by --repo-path"
             )
         logger.info(f"Using local repository at: {config.repo_path}")

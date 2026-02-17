@@ -21,16 +21,21 @@ def mock_logger():
 
 @pytest.fixture
 def mock_args(tmp_path):
-    """Create mock argparse.Namespace with default valid arguments."""
+    """Create mock argparse.Namespace with default valid arguments.
+    
+    Uses Path objects for config_dir and repo_path to match argparse type=Path behavior.
+    """
     args = argparse.Namespace(
         workspace_path=".",
-        config_dir=str(tmp_path / "config"),
-        repo_path=str(tmp_path / "workspace"),
+        config_dir=tmp_path / "config",
+        repo_path=tmp_path / "workspace",
         log_level="INFO",
         use_local=False,
         push_images=False,
         output_dir=str(tmp_path / "outputs"),
-        verbose=False
+        verbose=False,
+        source_repo=None,
+        source_ref=None,
     )
     return args
 
@@ -59,6 +64,7 @@ def valid_source_json(tmp_path: Path):
     source_data = {
         "repo": "https://github.com/awslabs/backstage-plugins-for-aws",
         "repo-ref": "78df9399a81cfd95265cab53815f54210b1d7f50",
+        "workspace-path": ".",
         "repo-flat": True,
         "repo-backstage-version": "1.42.5"
     }
@@ -133,6 +139,7 @@ def setup_test_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     source_data = {
         "repo": "https://github.com/awslabs/backstage-plugins-for-aws",
         "repo-ref": "78df9399a81cfd95265cab53815f54210b1d7f50",
+        "workspace-path": ".",
         "repo-flat": True,
         "repo-backstage-version": "1.42.5"
     }

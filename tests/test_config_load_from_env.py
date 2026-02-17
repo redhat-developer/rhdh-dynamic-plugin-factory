@@ -152,20 +152,24 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config.registry_url == "quay.io"
         assert config.registry_namespace == "test-namespace"
     
-    def test_load_from_env_missing_workspace_path(self, mock_args, setup_test_env, monkeypatch):
-        """Test that missing workspace_path raises ConfigurationError."""
+    def test_load_from_env_missing_workspace_path_deferred(self, mock_args, setup_test_env, monkeypatch):
+        """Test that missing workspace_path is allowed during load_from_env.
+        
+        workspace_path validation is deferred to cli._run() because it may be
+        resolved later from source.json's workspace-path field.
+        """
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        # Don't set WORKSPACE_PATH env var to test fallback
+        # Don't set WORKSPACE_PATH env var
         monkeypatch.delenv("WORKSPACE_PATH", raising=False)
         
         mock_args.config_dir = setup_test_env["config_dir"]
         mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = None  # Missing workspace_path
         
-        # When workspace_path is None and WORKSPACE_PATH env var is not set,
-        # validation should raise ConfigurationError
-        with pytest.raises(ConfigurationError, match="WORKSPACE_PATH must be set"):
-            PluginFactoryConfig.load_from_env(mock_args)
+        # Should not raise -- workspace_path validation is deferred
+        config = PluginFactoryConfig.load_from_env(mock_args)
+        
+        assert config.workspace_path == ""  # Empty, to be resolved later
     
     def test_load_from_env_directory_creation(self, mock_args, tmp_path, monkeypatch):
         """Test that config_dir and repo_path directories are created."""

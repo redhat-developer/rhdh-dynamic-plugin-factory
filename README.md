@@ -29,7 +29,8 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
     - [Command-Line Options](#command-line-options)
     - [Understanding Volume Mounts](#understanding-volume-mounts)
     - [Container Usage Examples](#container-usage-examples)
-      - [Minimal example (no local files saved)](#minimal-example-no-local-files-saved)
+      - [Minimal example using `source.json`](#minimal-example-using-sourcejson)
+      - [Minimal example using CLI args (no `source.json` needed)](#minimal-example-using-cli-args-no-sourcejson-needed)
       - [Build plugins and save outputs locally](#build-plugins-and-save-outputs-locally)
       - [Build and push to registry](#build-and-push-to-registry)
       - [Using a local repository (skip cloning)](#using-a-local-repository-skip-cloning)
@@ -138,6 +139,19 @@ podman run --rm -it \
   --workspace-path <path-to-workspace>
 ```
 
+Or, without a `source.json`, specify the repository directly:
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  -v ./source:/source:z \
+  -v ./outputs:/outputs:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --source-repo <repository-url> \
+  --workspace-path <path-to-workspace>
+```
+
 **Note:** The `--config-dir`, `--repo-path`, and `--output-dir` options use default values of `/config`, `/source`, and `/outputs` respectively, which map to your local directories through volume mounts.
 
 ### Running Locally Without Containers
@@ -175,7 +189,7 @@ This file contains required version settings and defaults for RHDH CLI:
 RHDH_CLI_VERSION="1.8.0"
 ```
 
-#### 2. `config/source.json` (Required for remote repositories)
+#### 2. `config/source.json` (Required for remote repositories, unless using `--source-repo`)
 
 Defines the source repository to clone:
 
@@ -183,13 +197,17 @@ Defines the source repository to clone:
 {
   "repo": "https://github.com/backstage/community-plugins",
   "repo-ref": "main",
+  "workspace-path": "workspaces/todo"
 }
 ```
 
 **Fields:**
 
 - `repo`: Repository URL (HTTPS or SSH)
-- `repo-ref`: Git reference (branch, tag, or commit SHA)
+- `repo-ref` *(optional)*: Git reference (branch, tag, or commit SHA). When omitted, the repository's default branch is used.
+- `workspace-path` *(optional)*: Path to the workspace from the repository root. Can be used instead of the `--workspace-path` CLI argument. The CLI argument takes precedence if both are provided.
+
+> **Note:** `source.json` is not needed when using the `--source-repo` CLI argument, which provides an alternative way to specify the repository directly from the command line. See [Command-Line Options](#command-line-options) for details.
 
 #### 3. `config/plugins-list.yaml` (Required)
 
@@ -293,13 +311,19 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 |--------|---------|-------------|
 | `--config-dir` | `/config` | Configuration directory containing `source.json`, `plugins-list.yaml`, patches, and overlays |
 | `--repo-path` | `/source` | Path where plugin source code will be cloned/stored |
-| `--workspace-path` | (required) | Path to the workspace from repository root (e.g., `workspaces/todo`) |
+| `--workspace-path` | *(see below)* | Path to the workspace from repository root (e.g., `workspaces/todo`). Can also be set via `source.json`'s `workspace-path` field. |
+| `--source-repo` | `None` | Git repository URL. When provided, `source.json` is not required and the repository is cloned from this URL. |
+| `--source-ref` | `None` | Git ref (branch/tag/commit) to check out. Defaults to the repository's default branch. Requires `--source-repo`. |
 | `--output-dir` | `/outputs` | Directory for build artifacts (`.tgz` files and container images) |
 | `--push-images` / `--no-push-images` | `--no-push-images` | Whether to push container images to registry. Defaults to not pushing if no argument is provided |
 | `--use-local` | `false` | Use local repository instead of cloning from source.json |
 | `--log-level` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 | `--verbose` | `false` | Show verbose output with file and line numbers |
 | `--clean` | `false` | Automatically removes content of `--repo-path` directory when cloning from `source.json`. Ignored if `--use-local` is used. |
+
+**Workspace path resolution:** The workspace path can be provided via the `--workspace-path` CLI argument, the `WORKSPACE_PATH` environment variable, or the `workspace-path` field in `source.json`. The CLI argument takes highest precedence, followed by the environment variable, then `source.json`.
+
+**Using `--source-repo` instead of `source.json`:** For single-workspace use cases, you can skip creating a `source.json` file entirely by using `--source-repo` (and optionally `--source-ref`) on the command line. When `--source-repo` is provided, `source.json` is ignored even if present. If `--source-ref` is omitted, the repository's default branch is used.
 
 ### Understanding Volume Mounts
 
@@ -319,9 +343,9 @@ When using the container, you can mount directories based on your needs:
 
 The following examples demonstrate common use cases with the container image. All examples assume you have the necessary configuration files (`source.json`, `plugins-list.yaml`, and optionally patches/overlays) in your configuration directory. See the [Configuration](#configuration) section for details.
 
-#### Minimal example (no local files saved)
+#### Minimal example using `source.json`
 
-This minimal example builds the TODO plugins without saving the workspace or output files locally:
+This minimal example builds the TODO plugins without saving the workspace or output files locally. The repository, ref, and workspace path are all defined in the example's `source.json`:
 
 ```bash
 podman run --rm -it \
@@ -332,6 +356,22 @@ podman run --rm -it \
 ```
 
 This will clone the repository, build the plugins, and NOT push the result to a remote repository.
+
+#### Minimal example using CLI args (no `source.json` needed)
+
+You can skip `source.json` entirely by specifying the repository via CLI arguments:
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --source-repo https://github.com/backstage/community-plugins \
+  --source-ref main \
+  --workspace-path workspaces/todo
+```
+
+If `--source-ref` is omitted, the repository's default branch is used automatically.
 
 #### Build plugins and save outputs locally
 
@@ -432,13 +472,25 @@ The `examples` directory contains ready-to-use configuration examples demonstrat
 
 ### Quick Example: TODO Workspace
 
-Build the TODO plugin from Backstage community plugins:
+Build the TODO plugin from Backstage community plugins using the example config:
 
 ```bash
 podman run --rm -it \
   --device /dev/fuse \
   -v ./examples/example-config-todo:/config:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --workspace-path workspaces/todo \
+  --no-push-images
+```
+
+Or build the same plugin using only CLI arguments (only a `plugins-list.yaml` in the config directory is needed):
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./examples/example-config-todo:/config:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --source-repo https://github.com/backstage/community-plugins \
   --workspace-path workspaces/todo \
   --no-push-images
 ```

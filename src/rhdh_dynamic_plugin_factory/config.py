@@ -28,6 +28,11 @@ class PluginFactoryConfig:
     config_dir: str = field(default="/config")
     workspace_path: str = field(default="")  # Relative path from repo_path to the workspace
     
+    # Source repository CLI overrides (take precedence over source.json)
+    # Used for single workspace case
+    source_repo: Optional[str] = field(default=None)
+    source_ref: Optional[str] = field(default=None)
+    
     # Registry configuration (loaded from environment variables, only required for push operations)
     registry_url: Optional[str] = field(default=None)
     registry_username: Optional[str] = field(default=None)
@@ -42,12 +47,18 @@ class PluginFactoryConfig:
     logger: ClassVar[Logger] = get_logger("config")
     
     def __post_init__(self) -> None:
-        """Validate configuration fields after initialization."""
+        """Validate configuration fields after initialization.
+        
+        Note: workspace_path is NOT validated here because it may be resolved
+        later from source.json. Validation happens in cli._run() after source
+        configuration discovery.
+        """
         if not self.rhdh_cli_version:
             raise ConfigurationError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
         
-        if not self.workspace_path:
-            raise ConfigurationError("WORKSPACE_PATH must be set via environment variable or --workspace-path argument")
+        # Validate source arg constraints: --source-ref requires --source-repo
+        if self.source_ref and not self.source_repo:
+            raise ConfigurationError("--source-ref requires --source-repo to be provided")
         
         valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if self.log_level.upper() not in valid_log_levels:
@@ -94,11 +105,21 @@ class PluginFactoryConfig:
         for dir_path in [config_dir, repo_path]:
             os.makedirs(dir_path, exist_ok=True)
         
+        # Resolve workspace_path: env var takes precedence, then CLI arg, then empty (potentially resolved later from source.json)
+        workspace_path = os.getenv("WORKSPACE_PATH") or ""
+        if not workspace_path and args.workspace_path:
+            workspace_path = str(args.workspace_path)
+        
+        source_repo = getattr(args, 'source_repo', None)
+        source_ref = getattr(args, 'source_ref', None)
+        
         config = cls(
             rhdh_cli_version=os.getenv("RHDH_CLI_VERSION", ""),
             repo_path=repo_path,
             config_dir=config_dir,
-            workspace_path=os.getenv("WORKSPACE_PATH", args.workspace_path),
+            workspace_path=workspace_path,
+            source_repo=source_repo,
+            source_ref=source_ref,
             registry_url=os.getenv("REGISTRY_URL"),
             registry_username=os.getenv("REGISTRY_USERNAME"),
             registry_password=os.getenv("REGISTRY_PASSWORD"),
@@ -153,14 +174,23 @@ class PluginFactoryConfig:
             ) from e
     
     def _validate_source_json(self) -> None:
-        """Validate source.json file existence and repo_path state."""
+        """Validate source.json file existence and repo_path state.
+        
+        Skips validation when --source-repo CLI arg is provided, since
+        CLI args fully replace source.json.
+        """
+        if self.source_repo:
+            self.logger.debug("Using --source-repo CLI argument, skipping source.json validation")
+            return
+        
         source_file = os.path.join(self.config_dir, "source.json")
         
         if not os.path.exists(source_file):
             if not os.path.exists(self.repo_path) or not os.listdir(self.repo_path):
                 raise ConfigurationError(
                     f"source.json not found at {source_file} and {self.repo_path} is empty. "
-                    "Please provide source.json to clone a repository or use --use-local with a locally mounted repository."
+                    "Please provide source.json to clone a repository, use --source-repo to specify a repository via CLI, "
+                    "or use --use-local with a locally mounted repository."
                 )
             else:
                 self.logger.warning(
@@ -225,14 +255,28 @@ class PluginFactoryConfig:
             raise PluginFactoryError(f"Failed to auto-generate plugins list: {e}") from e
     
     def discover_source_config(self) -> Optional["SourceConfig"]:
-        """Discovers and loads source configuration from config_dir/source.json.
+        """Discovers and loads source configuration.
+
+        CLI args (--source-repo/--source-ref) take precedence over source.json.
+        Falls back to local repo if no source configuration is available.
 
         Returns:
-            SourceConfig if source.json exists and is valid, None if falling back to local repo.
+            SourceConfig if source is configured, None if falling back to local repo.
 
         Raises:
-            ConfigurationError: If source.json is invalid or no valid source is available.
+            ConfigurationError: If source configuration is invalid or no valid source is available.
         """
+        # CLI args take precedence over source.json
+        if self.source_repo and not self.use_local:
+            self.logger.info("Using source configuration from CLI arguments")
+            source_config = SourceConfig.from_cli_args(
+                repo=self.source_repo,
+                repo_ref=self.source_ref,
+                workspace_path=self.workspace_path,
+            )
+            self.logger.debug(f"Using source config from CLI: {source_config}")
+            return source_config
+        
         source_file = os.path.join(self.config_dir, "source.json")
 
         if os.path.exists(source_file) and not self.use_local:
@@ -245,7 +289,8 @@ class PluginFactoryConfig:
         else:
             raise ConfigurationError(
                 f"No valid source configuration found and {self.repo_path} is empty or does not exist. "
-                f"Either provide a valid {source_file} or ensure locally stored plugin source code exists at {self.repo_path}"
+                f"Either provide a valid {source_file}, use --source-repo to specify a repository via CLI, "
+                f"or ensure locally stored plugin source code exists at {self.repo_path}"
             )
         return None
     
@@ -424,25 +469,30 @@ class PluginFactoryConfig:
 class SourceConfig:
     """Configuration for plugin source repository."""
     repo: str
-    repo_ref: str
+    repo_ref: Optional[str]  # None triggers default branch resolution in __post_init__
     workspace_path: str
     logger: ClassVar[Logger] = get_logger("source_config")
 
     def __post_init__(self) -> None:
-        if not self.workspace_path:
-            raise ConfigurationError("workspace-path is required")
         if not self.repo:
             raise ConfigurationError("repo is required")
-        if not self.repo_ref:
-            raise ConfigurationError("repo_ref is required")
+        if not self.workspace_path:
+            raise ConfigurationError("workspace-path is required")
         
+        # Resolve default branch at creation time if no ref was provided
+        if not self.repo_ref:
+            self.repo_ref = self.resolve_default_ref(self.repo)
 
     @classmethod
     def from_file(cls, source_file: Path) -> "SourceConfig":
         """Load source configuration from JSON file.
 
+        repo-ref is optional. When omitted, the default branch is resolved
+        automatically during construction via resolve_default_ref().
+
         Raises:
             ConfigurationError: If the file is missing, malformed, or has invalid data.
+            ExecutionError: If default branch resolution fails (when repo-ref is omitted).
         """
         try:
             with open(source_file, 'r') as f:
@@ -456,7 +506,7 @@ class SourceConfig:
 
         try:
             repo = data["repo"]
-            repo_ref = data.get("repo-ref")
+            repo_ref = data.get("repo-ref") or None  # Treat empty string as None
             workspace_path = data.get("workspace-path")
         except KeyError as e:
             raise ConfigurationError(f"Missing required field {e} in {source_file}")
@@ -468,6 +518,82 @@ class SourceConfig:
         )
 
         return config
+    
+    @classmethod
+    def from_cli_args(cls, repo: str, repo_ref: Optional[str], workspace_path: str) -> "SourceConfig":
+        """Create source configuration from CLI arguments.
+        
+        Args:
+            repo: Git repository URL (--source-repo).
+            repo_ref: Git ref to check out (--source-ref). None means default branch
+                (resolved automatically during construction via resolve_default_ref()).
+            workspace_path: Path to workspace within the repository (--workspace-path).
+        
+        Returns:
+            SourceConfig instance with repo_ref always resolved.
+        
+        Raises:
+            ConfigurationError: If required fields are missing.
+            ExecutionError: If default branch resolution fails (when repo_ref is None).
+        """
+        return cls(
+            repo=repo,
+            repo_ref=repo_ref,
+            workspace_path=workspace_path,
+        )
+    
+    @staticmethod
+    def resolve_default_ref(repo: str) -> str:
+        """Resolve the default branch ref for a repository using git ls-remote since repository is not cloned yet
+        
+        Args:
+            repo: Git repository URL.
+        
+        Returns:
+            The default branch ref (e.g., 'refs/heads/main').
+        
+        Raises:
+            ExecutionError: If git ls-remote fails or the default branch cannot be determined.
+        """
+        logger = get_logger("source_config")
+        logger.info(f"[cyan]Resolving default branch for {repo}...[/cyan]")
+        
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", "--symref", repo, "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            
+            # Output format:
+            #   ref: refs/heads/main\tHEAD
+            #   <sha>\tHEAD
+            for line in result.stdout.splitlines():
+                if line.startswith("ref:"):
+                    # Ex: Extract "refs/heads/main" from "ref: refs/heads/main\tHEAD"
+                    ref_part = line.split("\t")[0].replace("ref: ", "").strip()
+                    logger.info(f"[green]Resolved default branch: {ref_part}[/green]")
+                    return ref_part
+            
+            # Fallback: if no symbolic ref, use the HEAD SHA directly
+            for line in result.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) == 2 and parts[1].strip() == "HEAD":
+                    sha = parts[0].strip()
+                    logger.info(f"[green]Resolved default ref (SHA): {sha}[/green]")
+                    return sha
+            
+            raise ExecutionError(
+                "Could not determine default branch from git ls-remote output",
+                step="resolve default ref",
+            )
+        except subprocess.CalledProcessError as e:
+            raise ExecutionError(
+                f"Failed to resolve default branch for {repo}: {e.stderr.strip()}",
+                step="resolve default ref",
+                returncode=e.returncode,
+            ) from e
     
     def clone_to_path(self, repo_path: Path, clean: bool = False) -> None:
         """Clone the source repository to the specified path.
@@ -518,23 +644,22 @@ class SourceConfig:
                     returncode=returncode
                 )
             
-            if self.repo_ref:
-                cmd = ["git", "checkout", self.repo_ref]
-                logger.info(f"[cyan]Checking out ref: {self.repo_ref}[/cyan]")
-                # Git writes informational messages to stderr
-                returncode = run_command_with_streaming(
-                    cmd,
-                    logger,
-                    cwd=repo_path,
-                    stderr_log_func=logger.info
+            cmd = ["git", "checkout", self.repo_ref]
+            logger.info(f"[cyan]Checking out ref: {self.repo_ref}[/cyan]")
+            # Git writes informational messages to stderr
+            returncode = run_command_with_streaming(
+                cmd,
+                logger,
+                cwd=repo_path,
+                stderr_log_func=logger.info
+            )
+            
+            if returncode != 0:
+                raise ExecutionError(
+                    f"Failed to checkout ref {self.repo_ref} (exit code {returncode})",
+                    step="git checkout",
+                    returncode=returncode
                 )
-                
-                if returncode != 0:
-                    raise ExecutionError(
-                        f"Failed to checkout ref {self.repo_ref} (exit code {returncode})",
-                        step="git checkout",
-                        returncode=returncode
-                    )
             
             logger.info("[green]✓ Repository cloned successfully[/green]")
 
