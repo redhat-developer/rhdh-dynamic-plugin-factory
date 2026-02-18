@@ -1,0 +1,429 @@
+# Publish PR container images after pr-build.yaml completes
+# This workflow runs in a privileged context with access to secrets.
+# It downloads the container artifacts built by pr-build.yaml, pushes to registry,
+# creates a multi-platform manifest, and comments on the PR with image details.
+name: PR Publish
+
+on:
+  workflow_run:
+    workflows: ["PR Build"]
+    types: [completed]
+
+env:
+  REGISTRY: quay.io
+  REGISTRY_IMAGE: rhdh-community/dynamic-plugins-factory
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    env:
+      HAS_QUAY_AUTH: ${{ secrets.QUAY_USERNAME != '' && secrets.QUAY_TOKEN != '' }}
+    steps:
+      - name: Download PR metadata artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: pr-metadata
+          path: /tmp/pr-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read PR metadata
+        id: pr-info
+        run: |
+          # Read and validate PR metadata
+          # SECURITY: This artifact comes from an untrusted PR workflow
+          # All values must be strictly validated before use
+          if [[ ! -f "/tmp/pr-metadata/pr-info.json" ]]; then
+            echo "Error: PR metadata file not found"
+            exit 1
+          fi
+          
+          PR_NUMBER=$(jq -r '.pr_number' /tmp/pr-metadata/pr-info.json)
+          COMMIT_SHA=$(jq -r '.commit_sha' /tmp/pr-metadata/pr-info.json)
+          SHORT_SHA=$(jq -r '.short_sha' /tmp/pr-metadata/pr-info.json)
+          PRIMARY_TAG=$(jq -r '.primary_tag' /tmp/pr-metadata/pr-info.json)
+          # Convert JSON array to comma-separated string
+          ALL_TAGS=$(jq -r '.all_tags | if type == "array" then join(",") else . end' /tmp/pr-metadata/pr-info.json)
+          
+          # Validate PR number is numeric (1-7 digits)
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]{1,7}$ ]]; then
+            echo "Error: Invalid PR number: $PR_NUMBER"
+            exit 1
+          fi
+          
+          # Validate commit SHA is 40 hex characters
+          if ! [[ "$COMMIT_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Error: Invalid commit SHA: $COMMIT_SHA"
+            exit 1
+          fi
+          
+          # Validate short SHA is 7 hex characters
+          if ! [[ "$SHORT_SHA" =~ ^[a-f0-9]{7}$ ]]; then
+            echo "Error: Invalid short SHA: $SHORT_SHA"
+            exit 1
+          fi
+          
+          # Validate primary tag format (pr-NUMBER or pr-NUMBER-SHA)
+          if ! [[ "$PRIMARY_TAG" =~ ^pr-[0-9]{1,7}(-[a-f0-9]{7})?$ ]]; then
+            echo "Error: Invalid primary tag: $PRIMARY_TAG"
+            exit 1
+          fi
+          
+          # Validate all_tags contains only safe characters (alphanumeric, dash, comma)
+          if ! [[ "$ALL_TAGS" =~ ^[a-zA-Z0-9,.-]+$ ]]; then
+            echo "Error: Invalid all_tags format: $ALL_TAGS"
+            exit 1
+          fi
+          
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "primary_tag=${PRIMARY_TAG}" >> $GITHUB_OUTPUT
+          echo "all_tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
+          
+          echo "PR Number: $PR_NUMBER"
+          echo "Commit SHA: $COMMIT_SHA"
+          echo "Primary Tag: $PRIMARY_TAG"
+
+      - name: Download amd64 container artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: container-image-pr-${{ steps.pr-info.outputs.pr_number }}-amd64
+          path: /tmp/container-amd64
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download arm64 container artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: container-image-pr-${{ steps.pr-info.outputs.pr_number }}-arm64
+          path: /tmp/container-arm64
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Login to Quay
+        if: env.HAS_QUAY_AUTH == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Load, push images and create manifest
+        if: env.HAS_QUAY_AUTH == 'true'
+        id: push
+        continue-on-error: true
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
+          ALL_TAGS: ${{ steps.pr-info.outputs.all_tags }}
+        run: |
+          echo "::group::Load container images from artifacts"
+          # Images are built with arch-specific tags (e.g., pr-8-amd64, pr-8-arm64)
+          # so they won't overwrite each other when loaded
+          docker load -i /tmp/container-amd64/container-image.tar
+          docker load -i /tmp/container-arm64/container-image.tar
+          
+          echo "Loaded images:"
+          docker images
+          
+          # Get the primary tag with arch suffix for each platform
+          IFS=',' read -ra TAG_ARRAY <<< "$ALL_TAGS"
+          PRIMARY_TAG="${TAG_ARRAY[0]}"
+          
+          AMD64_IMAGE="${REGISTRY}/${REGISTRY_IMAGE}:${PRIMARY_TAG}-amd64"
+          ARM64_IMAGE="${REGISTRY}/${REGISTRY_IMAGE}:${PRIMARY_TAG}-arm64"
+          echo "amd64 image: $AMD64_IMAGE"
+          echo "arm64 image: $ARM64_IMAGE"
+          
+          # Verify we have two different images
+          AMD64_DIGEST=$(docker inspect --format='{{.Id}}' "$AMD64_IMAGE")
+          ARM64_DIGEST=$(docker inspect --format='{{.Id}}' "$ARM64_IMAGE")
+          echo "amd64 digest: $AMD64_DIGEST"
+          echo "arm64 digest: $ARM64_DIGEST"
+          if [[ "$AMD64_DIGEST" == "$ARM64_DIGEST" ]]; then
+            echo "ERROR: amd64 and arm64 images have the same digest!"
+            echo "This indicates a build or artifact issue."
+            exit 1
+          fi
+          echo "Verified: images have different digests"
+          echo "::endgroup::"
+          
+          echo "::group::Push architecture-specific images"
+          # Images already have arch suffix from build, just need to push
+          # Also create additional tags for each arch
+          for tag in "${TAG_ARRAY[@]}"; do
+            AMD64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-amd64"
+            ARM64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-arm64"
+            
+            echo "Pushing: $AMD64_TAG"
+            docker tag "$AMD64_IMAGE" "$AMD64_TAG"
+            docker push "$AMD64_TAG"
+            
+            echo "Pushing: $ARM64_TAG"
+            docker tag "$ARM64_IMAGE" "$ARM64_TAG"
+            docker push "$ARM64_TAG"
+          done
+          echo "::endgroup::"
+          
+          echo "::group::Create and push multi-platform manifests"
+          for tag in "${TAG_ARRAY[@]}"; do
+            MANIFEST_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}"
+            AMD64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-amd64"
+            ARM64_TAG="${REGISTRY}/${REGISTRY_IMAGE}:${tag}-arm64"
+            
+            echo "Creating manifest: $MANIFEST_TAG"
+            docker manifest create "$MANIFEST_TAG" \
+              --amend "$AMD64_TAG" \
+              --amend "$ARM64_TAG"
+            
+            echo "Pushing manifest: $MANIFEST_TAG"
+            docker manifest push "$MANIFEST_TAG"
+          done
+          echo "::endgroup::"
+          
+          echo "pushed_tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
+
+      - name: Clean up architecture-specific tags
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome == 'success' && env.QUAY_OAUTH_TOKEN != ''
+        env:
+          ALL_TAGS: ${{ steps.pr-info.outputs.all_tags }}
+          QUAY_OAUTH_TOKEN: ${{ secrets.QUAY_OAUTH_TOKEN }}
+        run: |
+          # Quay robot tokens cannot delete tags via API for security reasons
+          # Using an OAuth application token instead
+          echo "::group::Clean up architecture-specific tags"
+          
+          IFS=',' read -ra TAG_ARRAY <<< "$ALL_TAGS"
+          
+          for tag in "${TAG_ARRAY[@]}"; do
+            for arch in amd64 arm64; do
+              ARCH_TAG="${tag}-${arch}"
+              echo "Deleting tag: ${REGISTRY}/${REGISTRY_IMAGE}:${ARCH_TAG}"
+              
+              HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                -X DELETE \
+                -H "Authorization: Bearer ${QUAY_OAUTH_TOKEN}" \
+                "https://${REGISTRY}/api/v1/repository/${REGISTRY_IMAGE}/tag/${ARCH_TAG}")
+              
+              if [[ "$HTTP_STATUS" == "204" || "$HTTP_STATUS" == "200" ]]; then
+                echo "Successfully deleted ${ARCH_TAG}"
+              else
+                echo "Warning: Failed to delete ${ARCH_TAG} (HTTP ${HTTP_STATUS}), continuing..."
+              fi
+            done
+          done
+          echo "::endgroup::"
+
+      - name: Comment on PR
+        if: env.HAS_QUAY_AUTH == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
+          PRIMARY_TAG: ${{ steps.pr-info.outputs.primary_tag }}
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISH_RUN_ID: ${{ github.run_id }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER);
+            const shortSha = process.env.SHORT_SHA;
+            const primaryTag = process.env.PRIMARY_TAG;
+            const buildRunId = process.env.BUILD_RUN_ID;
+            const publishRunId = process.env.PUBLISH_RUN_ID;
+            const registry = process.env.REGISTRY;
+            const image = process.env.REGISTRY_IMAGE;
+            const pushOutcome = process.env.PUSH_OUTCOME;
+            
+            const prTag = `pr-${prNumber}`;
+            const prShaTag = `pr-${prNumber}-${shortSha}`;
+            
+            let body;
+            
+            if (pushOutcome === 'success') {
+              const expirationDate = new Date();
+              expirationDate.setDate(expirationDate.getDate() + 14);
+              const expirationStr = expirationDate.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+              });
+              
+              body = `## Container Image Published
+            
+            Multi-platform container images are now available.
+            
+            | Tag | Image | Platforms |
+            |-----|-------|-----------|
+            | \`${prTag}\` | \`${registry}/${image}:${prTag}\` | linux/amd64, linux/arm64 |
+            | \`${prShaTag}\` | \`${registry}/${image}:${prShaTag}\` | linux/amd64, linux/arm64 |
+            
+            **Expires:** ${expirationStr}
+            
+            ### Pull Commands
+            
+            \`\`\`bash
+            # Multi-platform (auto-selects correct architecture)
+            podman pull ${registry}/${image}:${prTag}
+            
+            # Or with specific commit SHA
+            podman pull ${registry}/${image}:${prShaTag}
+            \`\`\`
+            
+            ### Traceability
+            
+            - **Build:** [PR Build #${buildRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${buildRunId})
+            - **Publish:** [PR Publish #${publishRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${publishRunId})
+            - **Commit:** \`${shortSha}\`
+            `;
+            } else {
+              body = `## Container Image Publish Failed
+            
+            The container image publish step failed. Please check the workflow logs for details.
+            
+            ### Traceability
+            
+            - **Build:** [PR Build #${buildRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${buildRunId})
+            - **Publish:** [PR Publish #${publishRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${publishRunId}) (failed)
+            - **Commit:** \`${shortSha}\`
+            `;
+            }
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: body
+            });
+
+      - name: Publish Summary
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome == 'success'
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
+          COMMIT_SHA: ${{ steps.pr-info.outputs.commit_sha }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          PR_TAG="pr-${PR_NUMBER}"
+          PR_SHA_TAG="pr-${PR_NUMBER}-${SHORT_SHA}"
+          
+          EXPIRATION_DATE=$(date -d "+14 days" "+%B %d, %Y")
+          
+          echo "## PR Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag | Platforms |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${PR_TAG}\` | ${PR_TAG} | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${REGISTRY}/${REGISTRY_IMAGE}:${PR_SHA_TAG}\` | ${PR_SHA_TAG} | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Expires:** ${EXPIRATION_DATE}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Traceability" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pull Request:** [#${PR_NUMBER}](${SERVER_URL}/${REPOSITORY}/pull/${PR_NUMBER})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** [PR Build #${WORKFLOW_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: No Auth Summary
+        if: env.HAS_QUAY_AUTH != 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
+        run: |
+          echo "## PR Image Publish Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Registry credentials not configured. Image was not pushed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Number**: #${PR_NUMBER}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Publish Failed Summary
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome != 'success'
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          SHORT_SHA: ${{ steps.pr-info.outputs.short_sha }}
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISH_RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "## PR Image Publish Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The container image publish step failed. Please check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Traceability" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pull Request:** [#${PR_NUMBER}](${SERVER_URL}/${REPOSITORY}/pull/${PR_NUMBER})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build:** [PR Build #${BUILD_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${BUILD_RUN_ID})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Publish:** [PR Publish #${PUBLISH_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${PUBLISH_RUN_ID}) (failed)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail workflow if publish failed
+        if: env.HAS_QUAY_AUTH == 'true' && steps.push.outcome != 'success'
+        run: |
+          echo "Publish step failed. Failing workflow."
+          exit 1
+
+  # Handle failed upstream workflow
+  notify-failure:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment on PR
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+        with:
+          script: |
+            const buildRunId = process.env.BUILD_RUN_ID;
+            
+            const pullRequests = context.payload.workflow_run.pull_requests;
+            if (!pullRequests || pullRequests.length === 0) {
+              console.log('No pull request associated with this workflow run');
+              return;
+            }
+            
+            const prNumber = pullRequests[0].number;
+            
+            const body = `## Container Image Build Failed
+            
+            The PR Build workflow failed. No container image was published.
+            
+            ### Traceability
+            
+            - **Build:** [PR Build #${buildRunId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${buildRunId}) (failed)
+            `;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: body
+            });
+
+      - name: Failure Summary
+        env:
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "## PR Build Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The upstream PR Build workflow failed. No image was published." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failed workflow:** [PR Build #${WORKFLOW_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID})" >> $GITHUB_STEP_SUMMARY
