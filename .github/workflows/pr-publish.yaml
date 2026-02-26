@@ -25,7 +25,7 @@ jobs:
       HAS_QUAY_AUTH: ${{ secrets.QUAY_USERNAME != '' && secrets.QUAY_TOKEN != '' }}
     steps:
       - name: Download PR metadata artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: pr-metadata
           path: /tmp/pr-metadata
@@ -91,7 +91,7 @@ jobs:
           echo "Primary Tag: $PRIMARY_TAG"
 
       - name: Download amd64 container artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: container-image-pr-${{ steps.pr-info.outputs.pr_number }}-amd64
           path: /tmp/container-amd64
@@ -99,7 +99,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download arm64 container artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: container-image-pr-${{ steps.pr-info.outputs.pr_number }}-arm64
           path: /tmp/container-arm64
