@@ -1,0 +1,121 @@
+name: Update External Resources
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Mondays at 9 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-and-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Read current metadata hashes
+        id: metadata
+        shell: bash
+        env:
+          METADATA_FILE: resources/metadata.json
+        run: |
+          echo "scripts_hash=$(jq -r '."export-util-script-hash"' "$METADATA_FILE")" >> "$GITHUB_OUTPUT"
+          echo "rhdh_hash=$(jq -r '."rhdh-hash"' "$METADATA_FILE")" >> "$GITHUB_OUTPUT"
+
+      - name: Sync export-utils scripts
+        id: sync-scripts
+        uses: ./.github/actions/sync-external-files
+        with:
+          repository: redhat-developer/rhdh-plugin-export-utils
+          ref: main
+          current-hash: ${{ steps.metadata.outputs.scripts_hash }}
+          files: |
+            override-sources/override-sources.sh:scripts/override-sources.sh
+            export-dynamic/export-dynamic.sh:scripts/export-workspace.sh
+
+      - name: Sync RHDH yarn.lock
+        id: sync-rhdh
+        uses: ./.github/actions/sync-external-files
+        with:
+          repository: redhat-developer/rhdh
+          ref: main
+          current-hash: ${{ steps.metadata.outputs.rhdh_hash }}
+          files: |
+            yarn.lock:resources/rhdh/yarn.lock
+
+      - name: Update metadata and create PR
+        if: steps.sync-scripts.outputs.changes_detected == 'true' || steps.sync-rhdh.outputs.changes_detected == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCRIPTS_HASH: ${{ steps.sync-scripts.outputs.commit_hash }}
+          SCRIPTS_OLD_HASH: ${{ steps.metadata.outputs.scripts_hash }}
+          RHDH_HASH: ${{ steps.sync-rhdh.outputs.commit_hash }}
+          RHDH_OLD_HASH: ${{ steps.metadata.outputs.rhdh_hash }}
+          SCRIPTS_CHANGED: ${{ steps.sync-scripts.outputs.changes_detected }}
+          RHDH_CHANGED: ${{ steps.sync-rhdh.outputs.changes_detected }}
+          METADATA_FILE: "resources/metadata.json"
+        run: |
+          if [[ "$SCRIPTS_CHANGED" == "true" ]]; then
+            jq --arg hash "$SCRIPTS_HASH" \
+              '."export-util-script-hash" = $hash' "$METADATA_FILE" > tmp.json \
+              && mv tmp.json "$METADATA_FILE"
+          fi
+
+          if [[ "$RHDH_CHANGED" == "true" ]]; then
+            jq --arg hash "$RHDH_HASH" \
+              '."rhdh-hash" = $hash' "$METADATA_FILE" > tmp.json \
+              && mv tmp.json "$METADATA_FILE"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="auto/update-external-resources"
+          git checkout -B "$BRANCH"
+          git add -A
+
+          COMMIT_CHANGES=""
+          PR_CHANGES=""
+          if [[ "$SCRIPTS_CHANGED" == "true" ]]; then
+            COMMIT_CHANGES="${COMMIT_CHANGES}- rhdh-plugin-export-utils scripts (${SCRIPTS_OLD_HASH:0:7} -> ${SCRIPTS_HASH:0:7})"$'\n'
+            PR_CHANGES="${PR_CHANGES}- **rhdh-plugin-export-utils** scripts: [\`${SCRIPTS_OLD_HASH:0:7}\`](https://github.com/redhat-developer/rhdh-plugin-export-utils/commit/${SCRIPTS_OLD_HASH}) -> [\`${SCRIPTS_HASH:0:7}\`](https://github.com/redhat-developer/rhdh-plugin-export-utils/commit/${SCRIPTS_HASH})"$'\n'
+          fi
+          if [[ "$RHDH_CHANGED" == "true" ]]; then
+            COMMIT_CHANGES="${COMMIT_CHANGES}- rhdh yarn.lock (${RHDH_OLD_HASH:0:7} -> ${RHDH_HASH:0:7})"$'\n'
+            PR_CHANGES="${PR_CHANGES}- **rhdh** yarn.lock: [\`${RHDH_OLD_HASH:0:7}\`](https://github.com/redhat-developer/rhdh/commit/${RHDH_OLD_HASH}) -> [\`${RHDH_HASH:0:7}\`](https://github.com/redhat-developer/rhdh/commit/${RHDH_HASH})"$'\n'
+          fi
+
+          git commit -m "$(cat <<EOF
+          chore: update external resources
+
+          Updated:
+          ${COMMIT_CHANGES}
+          EOF
+          )"
+
+          git push -f origin "$BRANCH"
+
+          # Reuse existing PR if one is already open for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
+
+          if [[ -n "$EXISTING_PR" ]]; then
+            echo "PR #${EXISTING_PR} already exists, branch has been updated"
+          else
+            gh pr create \
+              --title "chore: update external resources" \
+              --body "$(cat <<EOF
+          ## Description
+
+          Automated weekly sync of external resources/scripts.
+
+          ### What changed
+
+          ${PR_CHANGES}
+          EOF
+              )" \
+              --base main \
+              --head "$BRANCH"
+          fi
