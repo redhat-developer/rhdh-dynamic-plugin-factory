@@ -18,18 +18,18 @@ RUN microdnf update -y
 RUN microdnf install -y --nodocs \
   --setopt=install_weak_deps=0 \
   --setopt=tsflags=nodocs \
-  python3 git-core patch python3-pip make g++ zlib-devel \
+  python3.12 git-core patch python3.12-pip make g++ zlib-devel \
   brotli-devel openssl-devel buildah bash patch jq fuse-overlayfs \
   && microdnf clean all
 
 COPY requirements.txt .
 
 # Install Python Dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
 RUN mkdir -p /workspace /outputs /config
 
 
-ENTRYPOINT ["python3", "-m", "src.rhdh_dynamic_plugin_factory"]
+ENTRYPOINT ["python3.12", "-m", "src.rhdh_dynamic_plugin_factory"]

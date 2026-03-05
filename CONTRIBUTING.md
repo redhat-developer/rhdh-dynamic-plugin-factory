@@ -78,7 +78,7 @@ Follow instructions in the main [Usage Docs](./README.md) for container usage an
 
 #### Requirements
 
-- **Python**: 3.8 or higher
+- **Python**: 3.10 or higher
 - **Node.js**: 22 or higher (version specified in `default.env`)
 - **Corepack**: To configure the yarn package managers on a project to project basis
 - **Git**: For cloning repositories
