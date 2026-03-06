@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 # Absolute path to the overlay root directory (patches directory will be overlay-root/patches)
@@ -11,10 +11,10 @@ TARGET_APPLY_DIR_ARG="$2"
 SOURCE_OVERLAY_FOLDER_NAME="${3:-overlay}"
 
 # Construct the patches directory path
-PATCHES_SOURCE_DIR="${OVERLAY_ROOT_DIR}/patches"
-echo "PATCHES_SOURCE_DIR: ${PATCHES_SOURCE_DIR}"
+PATCHES_SOURCE_DIR="${4:-${OVERLAY_ROOT_DIR}/patches}"
+
 # Source overlay files are expected directly in the overlay root
-SOURCE_OVERLAY_DIR="${OVERLAY_ROOT_DIR}"
+SOURCE_OVERLAY_DIR="${5:-${OVERLAY_ROOT_DIR}}"
 
 echo "=== Override Sources Script ==="
 echo "  Overlay root: ${OVERLAY_ROOT_DIR}"
@@ -22,10 +22,10 @@ echo "  Source of patches: ${PATCHES_SOURCE_DIR}"
 echo "  Source overlay folder: ${SOURCE_OVERLAY_DIR}"
 echo "  Overlay subfolder name: ${SOURCE_OVERLAY_FOLDER_NAME}"
 
-EFFECTIVE_TARGET_APPLY_DIR=$(pwd)
 PUSHED_DIR=false # Flag to track if we actually changed directory
 
 # Cleanup function to ensure we pop back if a directory was pushed
+# shellcheck disable=SC2329
 _cleanup() {
   if [ "$PUSHED_DIR" = true ]
   then
@@ -33,12 +33,6 @@ _cleanup() {
   fi
 }
 trap _cleanup EXIT 
-
-if [[ -f "${OVERLAY_ROOT_DIR}/backstage.json" ]]
-then
-  echo "Overriding backstage.json file"
-  cp -fv "${OVERLAY_ROOT_DIR}/backstage.json" "${TARGET_APPLY_DIR_ARG}/backstage.json"
-fi
 
 if [[ "${TARGET_APPLY_DIR_ARG}" != "." ]]
 then
@@ -67,14 +61,31 @@ then
     
     PATCHES_APPLIED=0
     for patch_file in "${PATCH_FILES[@]}"; do
-      echo "Attempting to apply patch: $patch_file"
-      if git apply --check "$patch_file"; then
-        git apply "$patch_file"
-        echo "Successfully applied patch: $patch_file"
+      # Detect patch type: git patches (diff --git) need -p1, standard patches (diff -u) need -p0
+      if grep -q -e "^diff --git" -e "^--- a/" "$patch_file"; then
+        PATCH_OPTS="-p1"
+        PATCH_TYPE="git"
+      else
+        PATCH_OPTS="-p0"
+        PATCH_TYPE="diff -u"
+      fi
+      
+      echo "Applying patch ($PATCH_TYPE): $patch_file"
+      
+      # Using 'patch' instead of 'git apply' because:
+      # - 'patch -l' ignores whitespace differences in context matching
+      # - 'patch' fails explicitly on mismatched hunks (git apply silently skips)
+      # Options: -l (ignore whitespace), --no-backup-if-mismatch, -f (non-interactive)
+      if patch $PATCH_OPTS -l --no-backup-if-mismatch -f < "$patch_file"; then
         ((++PATCHES_APPLIED))
       else
-        echo "Error: Patch $patch_file could not be applied cleanly in $(pwd)." >&2
-        exit 1 # Fail if a patch cannot be applied
+        echo "Error: Patch $patch_file failed to apply in $(pwd)." >&2
+        echo "Rejected hunks:" >&2
+        find . -name "*.rej" -newer "$patch_file" 2>/dev/null | while read -r rejfile; do
+          echo "=== $rejfile ===" >&2
+          cat "$rejfile" >&2
+        done
+        exit 1
       fi
     done
     echo "All ${PATCHES_APPLIED} patches applied successfully in $(pwd)."
@@ -91,22 +102,26 @@ PLUGINS_FILE="${SOURCE_OVERLAY_DIR}/plugins-list.yaml"
 if [[ -f "$PLUGINS_FILE" ]]; then
   echo "Found plugins list file: $PLUGINS_FILE"
   plugin_overlays_applied=0
-  while IFS= read -r plugin; do
+  while IFS= read -r plugin
+  do
 
     # Skip empty lines
-    if [[ "$(echo $plugin | sed 's/ *//')" == "" ]]; then
+    # shellcheck disable=SC2001
+    if [[ "$(echo "$plugin" | sed 's/ *//')" == "" ]]; then
       echo "Skip empty line"
       continue
     fi
     
     # Skip commented lines
-    if [[ "$(echo $plugin | sed 's/^#.*//')" == "" ]]; then
+    # shellcheck disable=SC2001
+    if [[ "$(echo "$plugin" | sed 's/^#.*//')" == "" ]]; then
       echo "Skip commented line"
       continue
     fi
     
     # Extract plugin path (part before colon)
-    pluginPath=$(echo $plugin | sed 's/^\([^:]*\): *\(.*\)$/\1/')
+    # shellcheck disable=SC2001
+    pluginPath=$(echo "$plugin" | sed 's/^\([^:]*\): *\(.*\)$/\1/')
     
     echo "Processing plugin: $pluginPath"
     
@@ -145,7 +160,9 @@ fi
 
 # Output number of patches applied for GitHub Actions
 if [[ "$GITHUB_OUTPUT" != "" ]]; then
+  # shellcheck disable=SC2086
   echo "PATCHES_APPLIED=${PATCHES_APPLIED}" >> $GITHUB_OUTPUT
+  # shellcheck disable=SC2086
   echo "SOURCE_OVERLAY_APPLIED=${SOURCE_OVERLAY_APPLIED}" >> $GITHUB_OUTPUT
 fi
 
