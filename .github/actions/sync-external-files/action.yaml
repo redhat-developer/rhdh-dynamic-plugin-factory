@@ -1,0 +1,128 @@
+name: 'Sync External Files'
+description: 'Fetch specific files from an external GitHub repository and overwrite local copies when they differ'
+
+inputs:
+  repository:
+    description: 'GitHub repository in owner/repo format (e.g., redhat-developer/rhdh)'
+    required: true
+  ref:
+    description: 'Branch, tag, or ref to fetch from'
+    required: false
+    default: 'main'
+  files:
+    description: 'Newline-separated list of source-path:destination-path file mappings'
+    required: true
+  current-hash:
+    description: 'Previously tracked commit hash. If provided and matches the remote HEAD, the clone and diff are skipped entirely.'
+    required: false
+    default: ''
+
+outputs:
+  changes_detected:
+    description: 'Whether any file content differed (true/false)'
+    value: ${{ steps.sync.outputs.changes_detected }}
+  commit_hash:
+    description: 'HEAD commit SHA of the fetched ref'
+    value: ${{ steps.sync.outputs.commit_hash }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Sync files from external repository
+      id: sync
+      shell: bash
+      env:
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_REF: ${{ inputs.ref }}
+        INPUT_FILES: ${{ inputs.files }}
+        INPUT_CURRENT_HASH: ${{ inputs.current-hash }}
+      run: |
+        set -euo pipefail
+
+        REPO_URL="https://github.com/${INPUT_REPOSITORY}.git"
+
+        if [[ -n "$INPUT_CURRENT_HASH" ]]; then
+          echo "::group::Check remote HEAD for ${INPUT_REPOSITORY}@${INPUT_REF}"
+          REMOTE_HASH=$(git ls-remote "$REPO_URL" "refs/heads/${INPUT_REF}" | cut -f1)
+          if [[ -z "$REMOTE_HASH" ]]; then
+            REMOTE_HASH=$(git ls-remote "$REPO_URL" "${INPUT_REF}" | cut -f1)
+          fi
+          echo "Remote HEAD: ${REMOTE_HASH:-unknown}"
+          echo "Current hash: ${INPUT_CURRENT_HASH}"
+          echo "::endgroup::"
+
+          if [[ "$REMOTE_HASH" == "$INPUT_CURRENT_HASH" ]]; then
+            echo "Remote hash unchanged - skipping clone and sync"
+            echo "commit_hash=${INPUT_CURRENT_HASH}" >> "$GITHUB_OUTPUT"
+            echo "changes_detected=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Remote hash differs - proceeding with sync"
+        fi
+
+        CLONE_DIR=$(mktemp -d)
+        trap "rm -rf '$CLONE_DIR'" EXIT
+
+        # Parse source file paths from mappings for sparse checkout
+        SOURCE_FILES=()
+        while IFS= read -r mapping; do
+          mapping=$(echo "$mapping" | xargs)
+          [[ -z "$mapping" ]] && continue
+          src="${mapping%%:*}"
+          SOURCE_FILES+=("$src")
+        done <<< "$INPUT_FILES"
+
+        if [[ ${#SOURCE_FILES[@]} -eq 0 ]]; then
+          echo "Error: No file mappings provided"
+          exit 1
+        fi
+
+        echo "::group::Sparse clone ${INPUT_REPOSITORY}@${INPUT_REF}"
+        git clone --depth 1 --branch "$INPUT_REF" --filter=blob:none --no-checkout \
+          "$REPO_URL" "$CLONE_DIR"
+
+        pushd "$CLONE_DIR" > /dev/null
+        git sparse-checkout init --no-cone
+        git sparse-checkout set "${SOURCE_FILES[@]}"
+        git checkout
+        COMMIT_HASH=$(git rev-parse HEAD)
+        popd > /dev/null
+        echo "::endgroup::"
+
+        echo "Fetched commit: ${COMMIT_HASH}"
+        echo "commit_hash=${COMMIT_HASH}" >> "$GITHUB_OUTPUT"
+
+        CHANGES_DETECTED="false"
+
+        echo "::group::Compare and sync files"
+        while IFS= read -r mapping; do
+          mapping=$(echo "$mapping" | xargs)
+          [[ -z "$mapping" ]] && continue
+
+          src="${mapping%%:*}"
+          dest="${mapping#*:}"
+          src_full="${CLONE_DIR}/${src}"
+
+          if [[ ! -f "$src_full" ]]; then
+            echo "::warning::Source file not found: ${src}"
+            continue
+          fi
+
+          if [[ ! -f "$dest" ]] || ! diff -q "$src_full" "$dest" > /dev/null 2>&1; then
+            echo "Updating: ${src} -> ${dest}"
+            mkdir -p "$(dirname "$dest")"
+            cp -f "$src_full" "$dest"
+            CHANGES_DETECTED="true"
+          else
+            echo "No changes: ${dest}"
+          fi
+        done <<< "$INPUT_FILES"
+        echo "::endgroup::"
+
+        echo "changes_detected=${CHANGES_DETECTED}" >> "$GITHUB_OUTPUT"
+
+        if [[ "$CHANGES_DETECTED" == "true" ]]; then
+          echo "Changes detected - files have been updated"
+        else
+          echo "No changes detected - all files are up to date"
+        fi
