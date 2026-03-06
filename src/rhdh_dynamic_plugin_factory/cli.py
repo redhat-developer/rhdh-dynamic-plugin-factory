@@ -2,6 +2,7 @@
 Command-line interface for RHDH Plugin Factory - Setup and orchestration tool.
 """
 
+import json
 import sys
 import os
 import argparse
@@ -25,6 +26,22 @@ except ImportError:
 
 logger = get_logger("cli")
 
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+
+def _build_version_string() -> str:
+    """Build version string including external resource metadata."""
+    lines = [f"rhdh-dynamic-plugin-factory:  {__version__}"]
+    try:
+        metadata_path = _PROJECT_ROOT / "resources" / "metadata.json"
+        metadata = json.loads(metadata_path.read_text())
+        lines.append(f"RHDH commit:                  {metadata['rhdh-hash']}")
+        lines.append(f"export-util script commit:    {metadata['export-util-script-hash']}")
+    except (FileNotFoundError, KeyError, json.JSONDecodeError):
+        pass
+    return "\n".join(lines)
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser for the CLI."""
     parser = argparse.ArgumentParser(
@@ -43,7 +60,7 @@ Examples:
     parser.add_argument(
         "-v", "--version",
         action="version",
-        version=__version__
+        version=_build_version_string()
     )
     parser.add_argument(
         "--log-level",
