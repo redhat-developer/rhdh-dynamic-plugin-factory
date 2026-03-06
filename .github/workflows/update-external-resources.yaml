@@ -58,16 +58,17 @@ jobs:
           RHDH_CHANGED: ${{ steps.sync-rhdh.outputs.changes_detected }}
           METADATA_FILE: "resources/metadata.json"
         run: |
+          TMP=$(mktemp)
           if [[ "$SCRIPTS_CHANGED" == "true" ]]; then
             jq --arg hash "$SCRIPTS_HASH" \
-              '."export-util-script-hash" = $hash' "$METADATA_FILE" > tmp.json \
-              && mv tmp.json "$METADATA_FILE"
+              '."export-util-script-hash" = $hash' "$METADATA_FILE" > "$TMP" \
+              && mv "$TMP" "$METADATA_FILE"
           fi
 
           if [[ "$RHDH_CHANGED" == "true" ]]; then
             jq --arg hash "$RHDH_HASH" \
-              '."rhdh-hash" = $hash' "$METADATA_FILE" > tmp.json \
-              && mv tmp.json "$METADATA_FILE"
+              '."rhdh-hash" = $hash' "$METADATA_FILE" > "$TMP" \
+              && mv "$TMP" "$METADATA_FILE"
           fi
 
           git config user.name "github-actions[bot]"
