@@ -17,9 +17,11 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
     - [Running Locally Without Containers](#running-locally-without-containers)
   - [Configuration](#configuration)
     - [Directory Structure](#directory-structure)
+      - [Single-Workspace Layout](#single-workspace-layout)
+      - [Multi-Workspace Layout](#multi-workspace-layout)
     - [Configuration Files](#configuration-files)
       - [1. `default.env` (Provided)](#1-defaultenv-provided)
-      - [2. `config/source.json` (Required for remote repositories)](#2-configsourcejson-required-for-remote-repositories)
+      - [2. `config/source.json` (Required for remote repositories, unless using `--source-repo`)](#2-configsourcejson-required-for-remote-repositories-unless-using---source-repo)
       - [3. `config/plugins-list.yaml` (Required)](#3-configplugins-listyaml-required)
       - [4. `config/.env` (Optional)](#4-configenv-optional)
     - [Patches and Overlays](#patches-and-overlays)
@@ -34,8 +36,14 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
       - [Build plugins and save outputs locally](#build-plugins-and-save-outputs-locally)
       - [Build and push to registry](#build-and-push-to-registry)
       - [Using a local repository (skip cloning)](#using-a-local-repository-skip-cloning)
+    - [Multi-Workspace Mode](#multi-workspace-mode)
+      - [How It Works](#how-it-works)
+      - [Multi-Workspace CLI Restrictions](#multi-workspace-cli-restrictions)
+      - [Multi-Workspace Example](#multi-workspace-example)
   - [Output](#output)
     - [Build Artifacts](#build-artifacts)
+      - [Single Workspace Mode Outputs](#single-workspace-mode-outputs)
+      - [Multi-Workspace Mode Outputs](#multi-workspace-mode-outputs)
     - [Container Images](#container-images)
   - [Examples](#examples)
     - [Quick Example: TODO Workspace](#quick-example-todo-workspace)
@@ -52,6 +60,7 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
 The RHDH Plugin Factory automates the process of converting Backstage plugins into RHDH dynamic plugins. It provides:
 
 - **Source Repository Management**: Clone and checkout plugin source repositories
+- **Multi-Workspace Support**: Export plugins from multiple workspaces across different repositories in a single run
 - **Patch & Overlay System**: Apply custom modifications to plugin source code before exporting
 - **Dependency Management**: Automated yarn installation with TypeScript compilation
 - **Dynamic Plugin Packaging**: Build, export and package plugins using the RHDH CLI
@@ -162,18 +171,48 @@ For local execution without containers, see [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ### Directory Structure
 
-The factory expects the following directory structure:
+The factory supports two directory layouts depending on whether you are building plugins from a single workspace or multiple workspaces.
+
+#### Single-Workspace Layout
 
 ```bash
 ./
-├── config/                                   # Configuration directory (Can be set with --config-dir)
-│   ├── .env                                  # Optional (if not pushing): Override environment variables + provide registry credentials
-│   ├── source.json                           # Source repository configuration
+├── config/                                   # Configuration directory (--config-dir)
+│   ├── .env                                  # Optional: Override environment variables + registry credentials
+│   ├── source.json                           # Source repository configuration (not needed with --source-repo)
 │   ├── plugins-list.yaml                     # List of plugins to build
 │   ├── patches/                              # Optional: Patch files to apply
 │   └── <path-to-plugin-in-workspace>/overlays/   # Optional: Files to overlay on plugin source
-├── source/                                   # Source code location (Can be set with --repo-path)
-└── outputs/                                  # Build output directory (Can be set with --output-dir)
+├── source/                                   # Source code location (--repo-path)
+└── outputs/                                  # Build output directory (--output-dir)
+```
+
+#### Multi-Workspace Layout
+
+When the config directory contains subdirectories with `source.json` files, the factory enters multi-workspace mode. Each subdirectory represents an independent workspace with similar directory layout as a single workspace directory:
+
+```bash
+./
+├── config/                                   # Configuration directory (--config-dir)
+│   ├── .env                                  # Optional: Root env, inherited by all workspaces
+│   ├── todo/                                 # Workspace "todo"
+│   │   ├── source.json                       # Required: repo, repo-ref, workspace-path
+│   │   ├── plugins-list.yaml                 # Plugins to build for this workspace
+│   │   ├── .env                              # Optional: Workspace-specific env overrides
+│   │   └── patches/                          # Optional: Patches for this workspace
+│   └── aws-ecs/                              # Workspace "aws-ecs"
+│       ├── source.json
+│       ├── plugins-list.yaml
+│       └── patches/
+├── source/                                   # Source code location (--repo-path)
+│   ├── .clones/                              # Bare clones (one per unique repo URL)
+│   │   ├── backstage-plugins-for-aws/        
+│   │   └── community-plugins/               
+│   ├── todo/                                 # Worktree for "todo" workspace
+│   └── aws-ecs/                              # Worktree for "aws-ecs" workspace
+└── outputs/                                  # Build output directory (--output-dir)
+    ├── todo/                                 # Outputs for "todo" workspace
+    └── aws-ecs/                              # Outputs for "aws-ecs" workspace
 ```
 
 Note: `source/` in this case refers to the default source code location if not provided by `--repo-path` and is not to be mistaken with the workspace containing the plugins to export. Refer to [Key Terminology](#--workspace-path-vs---repo-path) for more details.
@@ -243,14 +282,7 @@ REGISTRY_PASSWORD=your_password
 REGISTRY_NAMESPACE=your_namespace
 REGISTRY_INSECURE=false
 
-# Logging
-LOG_LEVEL=DEBUG
-WORKSPACE_PATH=<path_to_workspace_with_respect_to_plugin_repo_root>
 ```
-
-`LOG_LEVEL` can be set to one of `DEBUG`, `INFO` (default), `WARN`, `ERROR`, or `CRITICAL`
-
-`WORKSPACE_PATH` can be set in lieu of the `--workspace-path` argument
 
 Alternatively,  you can pass the `.env` file directly through podman using the `--env-file` argument instead of placing a `.env` file in the config directory:
 
@@ -321,9 +353,9 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 | `--verbose` | `false` | Show verbose output with file and line numbers |
 | `--clean` | `false` | Automatically removes content of `--repo-path` directory when cloning from `source.json`. Ignored if `--use-local` is used. |
 
-**Workspace path resolution:** The workspace path can be provided via the `--workspace-path` CLI argument, the `WORKSPACE_PATH` environment variable, or the `workspace-path` field in `source.json`. The CLI argument takes highest precedence, followed by the environment variable, then `source.json`.
+**Workspace path resolution:** In single-workspace use cases, the workspace path can be provided via the `--workspace-path` CLI argument, or the `workspace-path` field in `source.json`. The CLI argument takes highest precedence, followed by the `source.json`. For the multi-workspace case, only the `workspace-path` field in `source.json` is supported.
 
-**Using `--source-repo` instead of `source.json`:** For single-workspace use cases, you can skip creating a `source.json` file entirely by using `--source-repo` (and optionally `--source-ref`) on the command line. When `--source-repo` is provided, `source.json` is ignored even if present. If `--source-ref` is omitted, the repository's default branch is used.
+**Using `--source-repo` instead of `source.json`:** For single-workspace use cases only, you can skip creating a `source.json` file entirely by using `--source-repo` (and optionally `--source-ref`) on the command line. When `--source-repo` is provided, `source.json` is ignored even if present. If `--source-ref` is omitted, the repository's default branch is used.
 
 ### Understanding Volume Mounts
 
@@ -437,9 +469,57 @@ podman run --rm -it \
 
 **Note:** When using `--use-local`, patches and overlays will still be applied to your local repository. Make sure you have backups or are using version control.
 
+### Multi-Workspace Mode
+
+When the config directory contains subdirectories with `source.json` files, the factory automatically enters multi-workspace mode. This allows you to build plugins from multiple workspaces across different (or the same) repositories in a single run. Each workspace will have the same directory layout as a normal single workspace config directory.
+
+#### How It Works
+
+1. **Workspace Discovery**: The factory scans `--config-dir` for subdirectories containing `source.json`. Directories without `source.json` are ignored.
+2. **Repository Cloning**: Workspaces sharing the same repository URL share a single bare clone. Each workspace gets its own isolated [git worktree](https://git-scm.com/docs/git-worktree) at its specified ref which are stored in the `--repo-path` directory.
+3. **Environment Isolation**: Each workspace's `.env` file is loaded independently. The order in which environmental variables are loaded is as follows: `default.env` -> root `config/.env` -> workspace `.env`, with full env isolation between workspaces.
+4. **Error Collection**: A failure in one workspace does not stop processing of other workspaces. Errors are collected and reported in a summary at the end.
+
+#### Multi-Workspace CLI Restrictions
+
+The following CLI arguments are **not allowed** in multi-workspace mode since each workspace defines its own source configuration:
+
+- `--source-repo`
+- `--source-ref`
+- `--workspace-path`
+
+#### Multi-Workspace Example
+
+Create workspace subdirectories under your config directory:
+
+```bash
+config/
+├── .env                    # Shared env (e.g., registry credentials)
+├── todo/
+│   ├── source.json         # {"repo": "https://github.com/backstage/community-plugins", "repo-ref": "main", "workspace-path": "workspaces/todo"}
+│   └── plugins-list.yaml
+└── gitlab/
+    ├── source.json         # {"repo": "https://github.com/immobiliare/backstage-plugin-gitlab", "repo-ref": "main", "workspace-path": "."}
+    ├── plugins-list.yaml
+    └── .env                # Optional workspace level environmental variable overrides
+```
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  -v ./source:/source:z \
+  -v ./outputs:/outputs:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest
+```
+
+The factory will process each workspace sequentially, creating worktrees under `/source/` and outputs under `/outputs/`.
+
 ## Output
 
 ### Build Artifacts
+
+#### Single Workspace Mode Outputs
 
 The factory also produces the following outputs in the directory specified by `--output-dir`:
 
@@ -448,6 +528,24 @@ outputs/
 ├── plugin-name-dynamic-1.0.0.tgz           # Plugin tarball
 ├── plugin-name-dynamic-1.0.0.tgz.integrity # Integrity checksum
 └── ...
+```
+
+#### Multi-Workspace Mode Outputs
+
+In multi-workspace mode, the `--output-dir` directory will be partitioned into separate subdirectories, one for each workspace:
+
+```bash
+outputs
+├── aws-ecs
+│   ├── aws-amazon-ecs-plugin-for-backstage-backend-dynamic-0.9.0.tgz
+│   ├── aws-amazon-ecs-plugin-for-backstage-backend-dynamic-0.9.0.tgz.integrity
+│   ├── aws-amazon-ecs-plugin-for-backstage-dynamic-0.6.2.tgz
+│   └── aws-amazon-ecs-plugin-for-backstage-dynamic-0.6.2.tgz.integrity
+└── todo
+    ├── backstage-community-plugin-todo-backend-dynamic-0.15.0.tgz
+    ├── backstage-community-plugin-todo-backend-dynamic-0.15.0.tgz.integrity
+    ├── backstage-community-plugin-todo-dynamic-0.14.0.tgz
+    └── backstage-community-plugin-todo-dynamic-0.14.0.tgz.integrity
 ```
 
 ### Container Images
@@ -466,9 +564,10 @@ The `examples` directory contains ready-to-use configuration examples demonstrat
 
 | Example | Description | Details |
 |---------|-------------|---------|
-| **TODO** | Basic workspace with custom scalprum-config | [View README](./examples/example-config-todo/) |
-| **GitLab** | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/) |
-| **AWS ECS** | Patches and embed packages in plugins-list.yaml | [View README](./examples/example-config-aws-ecs/) |
+| **TODO** | Basic single-workspace with custom scalprum-config | [View README](./examples/example-config-todo/README.md) |
+| **GitLab** | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/README.md) |
+| **AWS ECS** | Patches and embed packages in plugins-list.yaml | [View README](./examples/example-config-aws-ecs/README.md) |
+| **Multi-Workspace** | Multiple workspaces from different repos in a single run | [View README](./examples/example-config-multi-workspace/README.md) |
 
 ### Quick Example: TODO Workspace
 

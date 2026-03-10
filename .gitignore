@@ -17,3 +17,6 @@ outputs/
 
 # Logs
 **/*.log
+
+# Local .env files
+**/.env

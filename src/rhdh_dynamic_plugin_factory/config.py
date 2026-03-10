@@ -15,7 +15,7 @@ import subprocess
 
 from .exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 from .logger import get_logger
-from .utils import clean_directory, run_command_with_streaming, display_export_results
+from .utils import run_command_with_streaming, display_export_results, prompt_or_clean_directory, repo_dir_name
 
 @dataclass
 class PluginFactoryConfig:
@@ -40,7 +40,6 @@ class PluginFactoryConfig:
     registry_namespace: Optional[str] = field(default=None)
     registry_insecure: bool = field(default=False)
 
-    log_level: str = field(default="INFO")
     use_local: bool = field(default=False)
     push_images: bool = field(default=False)
 
@@ -60,20 +59,58 @@ class PluginFactoryConfig:
         if self.source_ref and not self.source_repo:
             raise ConfigurationError("--source-ref requires --source-repo to be provided")
         
-        valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        if self.log_level.upper() not in valid_log_levels:
-            raise ConfigurationError(f"Invalid log level: {self.log_level}")
-        
         if self.push_images:
-            if not self.registry_url:
-                raise ConfigurationError("REGISTRY_URL environment variable is required when --push-images is enabled")
-            if not self.registry_namespace:
-                raise ConfigurationError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
-            if not self.registry_username or not self.registry_password:
-                raise ConfigurationError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
+            self._validate_registry_fields()
+    
+    def _validate_registry_fields(self) -> None:
+        """Validate that all required registry fields are present.
+        
+        Raises:
+            ConfigurationError: If any required registry field is missing.
+        """
+        if not self.registry_url:
+            raise ConfigurationError("REGISTRY_URL environment variable is required when --push-images is enabled")
+        if not self.registry_namespace:
+            raise ConfigurationError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
+        if not self.registry_username or not self.registry_password:
+            raise ConfigurationError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
+    
+    def refresh_registry_config(self) -> None:
+        """Re-read registry fields from os.environ and re-login if credentials changed.
+        
+        Called per workspace in multi-workspace mode after loading workspace-specific
+        .env files so that each workspace can target a different registry.
+        
+        Raises:
+            ConfigurationError: If push_images is enabled and required registry fields are missing.
+            ExecutionError: If buildah login fails after credential change.
+        """
+        new_url = os.getenv("REGISTRY_URL")
+        new_username = os.getenv("REGISTRY_USERNAME")
+        new_password = os.getenv("REGISTRY_PASSWORD")
+        new_namespace = os.getenv("REGISTRY_NAMESPACE")
+        new_insecure = os.getenv("REGISTRY_INSECURE", "false").lower() == "true"
+        
+        creds_changed = (
+            new_url != self.registry_url
+            or new_username != self.registry_username
+            or new_password != self.registry_password
+            or new_insecure != self.registry_insecure
+        )
+        
+        self.registry_url = new_url
+        self.registry_username = new_username
+        self.registry_password = new_password
+        self.registry_namespace = new_namespace
+        self.registry_insecure = new_insecure
+        
+        if self.push_images and creds_changed:
+            self._validate_registry_fields()
+            self._buildah_login()
 
     @classmethod
-    def load_from_env(cls, args: argparse.Namespace, env_file: Optional[Path] = None, push_images: bool = False) -> "PluginFactoryConfig":
+    def load_from_env(cls, args: argparse.Namespace, env_file: Optional[Path] = None,
+                      push_images: bool = False, multi_workspace: bool = False) -> "PluginFactoryConfig":
         """Load configuration from environment variables and .env files.
         
         Loads default.env first, then optionally loads additional env file to override defaults or provide additional values.
@@ -83,6 +120,8 @@ class PluginFactoryConfig:
             args: Parsed CLI arguments.
             env_file: Optional additional .env file to merge with defaults.
             push_images: Whether to push images to a registry (triggers registry validation and login).
+            multi_workspace: If True, skip root-level source.json and plugins-list.yaml
+                validation since each workspace manages its own.
         """
         default_env_path = Path(__file__).parent.parent.parent / "default.env"
         
@@ -90,11 +129,11 @@ class PluginFactoryConfig:
 
         if default_env_path.exists():
             load_dotenv(default_env_path)
-            cls.logger.debug(f'[green]✓ Loaded {default_env_path}[/green]')
+            cls.logger.debug(f'[green]Loaded {default_env_path}[/green]')
             
         if env_file and env_file.exists():
             load_dotenv(env_file, override=True)
-            cls.logger.debug(f'[green]✓ Loaded {env_file}[/green]')
+            cls.logger.debug(f'[green]Loaded {env_file}[/green]')
 
         cls.logger.debug('[bold blue]Loading configuration from environment variables and CLI arguments[/bold blue]')
         
@@ -105,10 +144,7 @@ class PluginFactoryConfig:
         for dir_path in [config_dir, repo_path]:
             os.makedirs(dir_path, exist_ok=True)
         
-        # Resolve workspace_path: env var takes precedence, then CLI arg, then empty (potentially resolved later from source.json)
-        workspace_path = os.getenv("WORKSPACE_PATH") or ""
-        if not workspace_path and args.workspace_path:
-            workspace_path = str(args.workspace_path)
+        workspace_path = getattr(args, 'workspace_path', None)
         
         source_repo = getattr(args, 'source_repo', None)
         source_ref = getattr(args, 'source_ref', None)
@@ -117,7 +153,7 @@ class PluginFactoryConfig:
             rhdh_cli_version=os.getenv("RHDH_CLI_VERSION", ""),
             repo_path=repo_path,
             config_dir=config_dir,
-            workspace_path=workspace_path,
+            workspace_path=workspace_path or "",
             source_repo=source_repo,
             source_ref=source_ref,
             registry_url=os.getenv("REGISTRY_URL"),
@@ -125,13 +161,13 @@ class PluginFactoryConfig:
             registry_password=os.getenv("REGISTRY_PASSWORD"),
             registry_namespace=os.getenv("REGISTRY_NAMESPACE"),
             registry_insecure=os.getenv("REGISTRY_INSECURE", "false").lower() == "true",
-            log_level=os.getenv("LOG_LEVEL", args.log_level),
             use_local=args.use_local,
             push_images=push_images,
         )
         
-        config._validate_source_json()
-        config._validate_plugins_list()
+        if not multi_workspace:
+            config._validate_source_json()
+            config._validate_plugins_list()
         
         if push_images:
             config._buildah_login()
@@ -210,32 +246,37 @@ class PluginFactoryConfig:
         else:
             self.logger.debug(f"Using plugins-list.yaml from: {plugins_file}")
     
-    def auto_generate_plugins_list(self) -> None:
-        """
-        Auto-generate plugins-list.yaml if it doesn't already exist.
+    def auto_generate_plugins_list(self, config_dir: Optional[str] = None,
+                                    repo_path: Optional[str] = None,
+                                    workspace_path: Optional[str] = None) -> None:
+        """Auto-generate plugins-list.yaml if it doesn't already exist.
 
-        Assumes the following:
-        - The repository is cloned to the `repo_path`
-        - The plugins are located in the plugins/* directory
-        - `workspace_path` is the path to the workspace from the root of the repository
+        Args:
+            config_dir: Config directory containing plugins-list.yaml. Defaults to self.config_dir.
+            repo_path: Repository path. Defaults to self.repo_path.
+            workspace_path: Workspace path relative to repo. Defaults to self.workspace_path.
 
         Raises:
             PluginFactoryError: If auto-generation fails.
         """
-        plugins_file = os.path.join(self.config_dir, "plugins-list.yaml")
+        config_dir = config_dir or self.config_dir
+        repo_path = repo_path or self.repo_path
+        workspace_path = workspace_path or self.workspace_path
+        
+        plugins_file = os.path.join(config_dir, "plugins-list.yaml")
         
         if os.path.exists(plugins_file):
-            self.logger.debug(f"[green]✓ plugins-list.yaml already exists at {plugins_file}. Skipping auto-generation.[/green]")
+            self.logger.debug(f"[green]plugins-list.yaml already exists at {plugins_file}. Skipping auto-generation.[/green]")
             return
         
         self.logger.info("[bold blue]Auto-generating plugins-list.yaml[/bold blue]")
         
-        if not os.path.exists(self.repo_path):
-            raise PluginFactoryError(f"Repository does not exist at {self.repo_path}")
+        if not os.path.exists(repo_path):
+            raise PluginFactoryError(f"Source code repository does not exist at {repo_path}")
 
-        workspace_full_path = os.path.abspath(os.path.join(self.repo_path, self.workspace_path))
+        workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
         if not os.path.exists(workspace_full_path):
-            raise PluginFactoryError(f"Workspace does not exist at {workspace_full_path}")
+            raise PluginFactoryError(f"Plugin workspace does not exist at {workspace_full_path}")
         
         try:
             # TODO: Implement PluginListConfig.create_default function
@@ -324,38 +365,51 @@ class PluginFactoryConfig:
             self.logger.warning(f"{plugins_list_file} not found, will auto-generate after repository is available")
         return source_config
     
-    def apply_patches_and_overlays(self) -> None:
+    def apply_patches_and_overlays(self, config_dir: Optional[str] = None,
+                                    repo_path: Optional[str] = None,
+                                    workspace_path: Optional[str] = None) -> None:
         """Apply patches and overlays using override-sources.sh script.
+
+        Args:
+            config_dir: Config directory containing patches/ and overlays. Defaults to self.config_dir.
+            repo_path: Repository root path (worktree root in multi-workspace mode). Defaults to self.repo_path.
+            workspace_path: Workspace path relative to repo_path. Defaults to self.workspace_path.
 
         Raises:
             ExecutionError: If the patch script is not found or fails.
         """
+        config_dir = config_dir or self.config_dir
+        repo_path = repo_path or self.repo_path
+        workspace_path = workspace_path or self.workspace_path
+
         script_dir = Path(__file__).parent.parent.parent / "scripts"
         script_path = script_dir / "override-sources.sh"
         STEP_NAME = "apply patches and overlays"
-        
+
         if not script_path.exists():
             raise ExecutionError(
                 f"Script not found: {script_path}",
                 step=STEP_NAME
             )
-        
-        workspace_full_path = os.path.abspath(os.path.join(self.repo_path, self.workspace_path))
-        self.logger.debug(f"Applying patches and overlays to workspace: {workspace_full_path}")
+
+        repo_root = os.path.abspath(repo_path)
+        workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
+        self.logger.debug(f"Applying patches at repo root: {repo_root}")
+        self.logger.debug(f"Applying overlays to workspace: {workspace_full_path}")
         cmd = [
             str(script_path.absolute()),
-            os.path.abspath(self.config_dir),  # Overlay root directory
-            workspace_full_path,     # Target directory 
+            os.path.abspath(config_dir),
+            workspace_full_path,
         ]
 
         try:
             returncode = run_command_with_streaming(
                 cmd,
                 self.logger,
-                cwd=Path(workspace_full_path),
+                cwd=Path(repo_root),
                 stderr_log_func=self.logger.error
             )
-            
+
             if returncode == 0:
                 self.logger.info("[green]Patches and overlays applied successfully[/green]")
             else:
@@ -372,13 +426,25 @@ class PluginFactoryConfig:
                 step=STEP_NAME
             ) from e
     
-    def export_plugins(self, output_dir: str) -> None:
+    def export_plugins(self, output_dir: str, config_dir: Optional[str] = None,
+                        repo_path: Optional[str] = None,
+                        workspace_path: Optional[str] = None) -> None:
         """Export plugins using export-workspace.sh script.
+
+        Args:
+            output_dir: Directory for build artifacts.
+            config_dir: Config directory containing plugins-list.yaml and .env. Defaults to self.config_dir.
+            repo_path: Repository path. Defaults to self.repo_path.
+            workspace_path: Workspace path relative to repo. Defaults to self.workspace_path.
 
         Raises:
             ExecutionError: If the export script is not found or fails.
             ConfigurationError: If no plugins list file is found.
         """
+        config_dir = config_dir or self.config_dir
+        repo_path = repo_path or self.repo_path
+        workspace_path = workspace_path or self.workspace_path
+        
         script_dir = Path(__file__).parent.parent.parent / "scripts"
         script_path = script_dir / "export-workspace.sh"
         STEP_NAME = "export plugins"
@@ -389,12 +455,12 @@ class PluginFactoryConfig:
                 step=STEP_NAME
             )
         
-        plugins_list_file = os.path.join(self.config_dir, "plugins-list.yaml")
+        plugins_list_file = os.path.join(config_dir, "plugins-list.yaml")
         
         if not os.path.exists(plugins_list_file):
             raise ConfigurationError("No plugins file found")
 
-        config_env_file = os.path.join(self.config_dir, ".env")
+        config_env_file = os.path.join(config_dir, ".env")
         default_env_file = Path(__file__).parent.parent.parent / "default.env"
         load_dotenv(default_env_file)
         env = dict(os.environ)
@@ -402,7 +468,6 @@ class PluginFactoryConfig:
         if os.path.exists(config_env_file):
             self.logger.debug(f"Loading script configuration from: {config_env_file}")
             load_dotenv(config_env_file, override=True)
-            # Reload env after loading .env
             env = dict(os.environ)
         
         os.makedirs(output_dir, exist_ok=True)
@@ -421,7 +486,7 @@ class PluginFactoryConfig:
             "INPUTS_CONTAINER_BUILD_TOOL": "buildah",
         })
         
-        workspace_full_path = os.path.abspath(os.path.join(self.repo_path, self.workspace_path))
+        workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
         try:
             def conditional_stderr_log(line: str) -> None:
                 if "Error" in line:
@@ -556,7 +621,7 @@ class SourceConfig:
             ExecutionError: If git ls-remote fails or the default branch cannot be determined.
         """
         logger = get_logger("source_config")
-        logger.info(f"[cyan]Resolving default branch for {repo}...[/cyan]")
+        logger.info(f"[cyan]Resolving default branch for {repo}cyan]")
         
         try:
             result = subprocess.run(
@@ -566,27 +631,17 @@ class SourceConfig:
                 check=True,
             )
             
-            # Output format:
-            #   ref: refs/heads/main\tHEAD
-            #   <sha>\tHEAD
             for line in result.stdout.splitlines():
                 if line.startswith("ref:"):
                     # Ex: Extract "refs/heads/main" from "ref: refs/heads/main\tHEAD"
                     ref_part = line.split("\t")[0].replace("ref: ", "").strip()
-                    logger.info(f"[green]Resolved default branch: {ref_part}[/green]")
+                    logger.info(f"[green]Resolved default branch: {ref_part} for {repo}[/green]")
                     return ref_part
             
-            # Fallback: if no symbolic ref, use the HEAD SHA directly
-            for line in result.stdout.splitlines():
-                parts = line.split("\t")
-                if len(parts) == 2 and parts[1].strip() == "HEAD":
-                    sha = parts[0].strip()
-                    logger.info(f"[green]Resolved default ref (SHA): {sha}[/green]")
-                    return sha
-            
-            raise ExecutionError(
-                "Could not determine default branch from git ls-remote output",
-                step="resolve default ref",
+            raise ConfigurationError(
+                f"Could not resolve the default branch for '{repo}'. "
+                "Please specify a branch or ref explicitly via 'repo-ref' in source.json "
+                "or the --source-ref CLI argument."
             )
         except subprocess.CalledProcessError as e:
             raise ExecutionError(
@@ -613,20 +668,7 @@ class SourceConfig:
         self.logger.info(f"Reference: {self.repo_ref}")
         self.logger.info(f"Destination directory: {repo_path}")
         
-        if any(repo_path.iterdir()):
-            self.logger.warning(f"[yellow]Source directory {repo_path} is not empty[/yellow]")
-            if clean:
-                self.logger.warning(f"[yellow]`--clean` argument set, automatically cleaning {repo_path}[/yellow]")
-                clean_directory(repo_path)
-            else:
-                self.logger.warning(f"[yellow]WARNING: Are you sure you want to remove the contents of {repo_path}/? \\[y/N][/yellow]")
-                confirm = input()
-                if confirm != "y":
-                    self.logger.warning("[yellow]Aborted[/yellow]")
-                    raise PluginFactoryError("Repository clone aborted by user")
-                else:
-                    self.logger.warning(f"[yellow]`y` selected. Cleaning {repo_path}. Note: you can use the `--clean` argument to automatically clean the directory and skip this prompt next time.[/yellow]")
-                    clean_directory(repo_path)
+        prompt_or_clean_directory(repo_path, clean, self.logger)
             
         try:
             cmd = ["git", "clone", self.repo, str(repo_path)]
@@ -670,6 +712,155 @@ class SourceConfig:
                 f"Failed during repository clone/checkout: {e}",
                 step="git clone/checkout"
             ) from e
+
+@dataclass
+class WorkspaceInfo:
+    """Per-workspace configuration for multi-workspace mode.
+    
+    Represents a single workspace discovered from a config subdirectory.
+    """
+    name: str
+    config_dir: Path
+    source_config: SourceConfig
+    repo_path: Optional[Path] = None
+    output_dir: Optional[Path] = None
+
+    def resolve_paths(self, base_repo_path: Path, base_output_dir: Path) -> None:
+        """Set per-workspace source code repo and output paths from base directories."""
+        self.repo_path = base_repo_path / self.name
+        self.output_dir = base_output_dir / self.name
+
+
+def discover_workspaces(config_dir: Path) -> list["WorkspaceInfo"]:
+    """Scan config directory for workspace subdirectories.
+    
+    A subdirectory is considered a workspace if it contains a source.json file.
+    Non-workspace entries are skipped silently; the caller is responsible for
+    warning the user about ignored content.
+    
+    Args:
+        config_dir: Root configuration directory to scan.
+    
+    Returns:
+        List of WorkspaceInfo instances sorted by repo URL (primary) then name (secondary),
+        making downstream groupby(repo) trivial.
+    
+    Raises:
+        ConfigurationError: If a workspace's source.json is invalid.
+    """
+    logger = get_logger("config")
+    workspaces: list[WorkspaceInfo] = []
+    
+    if not config_dir.is_dir():
+        return workspaces
+    
+    for entry in sorted(config_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        
+        source_file = entry / "source.json"
+        if not source_file.exists():
+            logger.debug(f"Skipping {entry.name}/ — no source.json")
+            continue
+        
+        workspace_name = entry.name
+        logger.debug(f"Discovered workspace: {workspace_name}")
+        
+        source_config = SourceConfig.from_file(source_file)
+        
+        workspaces.append(WorkspaceInfo(
+            name=workspace_name,
+            config_dir=entry,
+            source_config=source_config,
+        ))
+    
+    # Sort by repo URL (primary) then workspace name (secondary)
+    workspaces.sort(key=lambda w: (w.source_config.repo, w.name))
+    
+    return workspaces
+
+
+def clone_workspaces_with_worktrees(
+    workspaces: list["WorkspaceInfo"],
+    base_repo_path: Path,
+) -> None:
+    """Clone repositories and create git worktrees for multi-workspace mode.
+    
+    Groups workspaces by repo URL, clones each unique repo once into
+    <base_repo_path>/.clones/<repo-name>/, then creates a worktree per
+    workspace at <base_repo_path>/<workspace-name>/.
+    
+    The caller is responsible for cleaning base_repo_path before calling
+    this function (e.g. via prompt_or_clean_directory). This function
+    assumes it can write freely into base_repo_path.
+    
+    Args:
+        workspaces: List of WorkspaceInfo (must already have repo_path set via resolve_paths).
+        base_repo_path: Base directory for repo clones and worktrees.
+    
+    Raises:
+        PluginFactoryError: If a workspace has no repo_path resolved (internal error).
+        ExecutionError: If any git operation fails.
+    """
+    from itertools import groupby
+    
+    logger = get_logger("config")
+    clones_dir = base_repo_path / ".clones"
+    os.makedirs(clones_dir, exist_ok=True)
+    
+    for repo_url, group in groupby(workspaces, key=lambda w: w.source_config.repo):
+        workspace_list = list(group)
+        repo_name = repo_dir_name(repo_url)
+        clone_path = clones_dir / repo_name
+        
+        logger.info(f"[bold blue]\nCloning base repository: {repo_url}[/bold blue]")
+        logger.info(f"  Destination: {clone_path}")
+        
+        cmd = ["git", "clone", "--bare", repo_url, str(clone_path)]
+        returncode = run_command_with_streaming(
+            cmd, logger, stderr_log_func=logger.info
+        )
+        
+        if returncode != 0:
+            raise ExecutionError(
+                f"Failed to clone repository '{repo_url}' (exit code {returncode}). "
+                f"Please verify the 'repo' URL in the source.json for workspaces using this repository. "
+                f"Ensure the URL is correct and accessible from your environment.",
+                step="git clone (bare)",
+                returncode=returncode,
+            )
+        
+        logger.info(f"[green]Cloned {repo_url} to {clone_path}[/green]")
+        
+        for ws in workspace_list:
+            worktree_path = ws.repo_path
+            if worktree_path is None:
+                raise PluginFactoryError(
+                    f"Internal error: workspace '{ws.name}' has no resolved repository path. "
+                    f"This is a bug in the plugin factory. Please report this issue."
+                )
+            
+            ref = ws.source_config.repo_ref
+            logger.info(f"[cyan]\nCreating git worktree for '{ws.name}' at ref {ref}[/cyan]")
+            
+            # Must use absolute path: git worktree add runs with cwd=clone_path,
+            # so a relative worktree_path would resolve against the clone directory.
+            cmd = ["git", "worktree", "add", "--detach", str(worktree_path.resolve()), ref]
+            returncode = run_command_with_streaming(
+                cmd, logger, cwd=clone_path, stderr_log_func=logger.info
+            )
+            
+            if returncode != 0:
+                raise ExecutionError(
+                    f"Failed to create worktree for workspace '{ws.name}' at ref '{ref}' (exit code {returncode}). "
+                    f"Please verify the 'repo-ref' value in {ws.config_dir / 'source.json'}. "
+                    f"Ensure the branch, tag, or commit exists in the repository.",
+                    step="git worktree add",
+                    returncode=returncode,
+                )
+            
+            logger.info(f"[green]  Worktree created for '{ws.name}' at {worktree_path}[/green]")
+
 
 class PluginListConfig:
     """Configuration for plugin list (YAML format)."""

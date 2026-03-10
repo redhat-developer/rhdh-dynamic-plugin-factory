@@ -6,6 +6,7 @@ Tests the source configuration loading, CLI arg construction, and repository clo
 
 import json
 import subprocess
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -57,7 +58,38 @@ class TestSourceConfigFromFile:
         with pytest.raises(ConfigurationError, match="repo is required"):
             SourceConfig.from_file(source_file)
     
-
+    def test_from_file_empty_repo_ref_resolves_default(self, tmp_path):
+        """Test that empty repo-ref triggers default branch resolution."""
+        source_data = {
+            "repo": "https://github.com/test/repo",
+            "repo-ref": "",
+            "workspace-path": "."
+        }
+        
+        source_file = tmp_path / "source.json"
+        source_file.write_text(json.dumps(source_data))
+        
+        with patch.object(SourceConfig, "resolve_default_ref", return_value="refs/heads/main"):
+            config = SourceConfig.from_file(source_file)
+            assert config.repo == "https://github.com/test/repo"
+            assert config.repo_ref == "refs/heads/main"
+            assert config.workspace_path == "."
+    
+    def test_from_file_missing_repo_ref_resolves_default(self, tmp_path):
+        """Test that omitted repo-ref triggers default branch resolution."""
+        source_data = {
+            "repo": "https://github.com/test/repo",
+            "workspace-path": "."
+        }
+        
+        source_file = tmp_path / "source.json"
+        source_file.write_text(json.dumps(source_data))
+        
+        with patch.object(SourceConfig, "resolve_default_ref", return_value="refs/heads/main"):
+            config = SourceConfig.from_file(source_file)
+            assert config.repo == "https://github.com/test/repo"
+            assert config.repo_ref == "refs/heads/main"
+            assert config.workspace_path == "."
     
     def test_from_file_malformed_json(self, tmp_path):
         """Test that malformed JSON raises ConfigurationError with descriptive message."""
@@ -147,24 +179,23 @@ class TestResolveDefaultRef:
             with pytest.raises(ExecutionError, match="Failed to resolve default branch"):
                 SourceConfig.resolve_default_ref("https://github.com/test/nonexistent")
     
-    def test_resolve_default_ref_empty_output(self):
-        """Test that empty git ls-remote output raises ExecutionError."""
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        
-        with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(ExecutionError, match="Could not determine default branch"):
-                SourceConfig.resolve_default_ref("https://github.com/test/repo")
-    
-    def test_resolve_default_ref_sha_fallback(self):
-        """Test falling back to SHA when no symbolic ref line is present."""
+    def test_resolve_default_ref_no_symbolic_ref(self):
+        """Test that missing symbolic ref raises ConfigurationError with actionable message."""
         mock_result = MagicMock()
         mock_result.stdout = "abc123def456\tHEAD\n"
         
         with patch("subprocess.run", return_value=mock_result):
-            ref = SourceConfig.resolve_default_ref("https://github.com/test/repo")
-            
-            assert ref == "abc123def456"
+            with pytest.raises(ConfigurationError, match="Could not resolve the default branch"):
+                SourceConfig.resolve_default_ref("https://github.com/test/repo")
+    
+    def test_resolve_default_ref_empty_output(self):
+        """Test that empty git ls-remote output raises ConfigurationError."""
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        
+        with patch("subprocess.run", return_value=mock_result):
+            with pytest.raises(ConfigurationError, match="Could not resolve the default branch"):
+                SourceConfig.resolve_default_ref("https://github.com/test/repo")
 
 
 class TestSourceConfigCloneToPath:
@@ -298,44 +329,104 @@ class TestSourceConfigCloneToPath:
 
 
 class TestSourceConfigCloneToPathClean:
-    """Tests for SourceConfig.clone_to_path clean argument and user prompt behavior."""
+    """Tests for SourceConfig.clone_to_path clean argument and user prompt behavior.
+    
+    Uses real filesystem operations to verify that nested directory contents are 
+    actually removed or preserved as expected.
+    """
 
-    def test_clean_flag_auto_cleans_nonempty_directory(self, tmp_path):
-        """Test that clean=True automatically cleans a non-empty directory without prompting."""
-        config = SourceConfig(
+    @staticmethod
+    def _make_nested_repo(repo_path: Path) -> None:
+        """Create a realistic nested directory structure for testing."""
+        repo_path.mkdir(exist_ok=True)
+        (repo_path / "existing_file.txt").write_text("existing content")
+        (repo_path / ".hidden_config").write_text("hidden")
+        src = repo_path / "src"
+        src.mkdir()
+        (src / "index.ts").write_text("export {}")
+        components = src / "components"
+        components.mkdir()
+        (components / "App.tsx").write_text("<App/>")
+        modules = repo_path / "node_modules" / "package"
+        modules.mkdir(parents=True)
+        (modules / "index.js").write_text("module.exports = {}")
+
+    @staticmethod
+    def _make_config(repo_ref: str = "main") -> SourceConfig:
+        return SourceConfig(
             repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
+            repo_ref=repo_ref,
             workspace_path="."
         )
 
+    def test_clean_flag_auto_cleans_nested_contents(self, tmp_path):
+        """Test that clean=True removes all nested contents without prompting."""
+        config = self._make_config()
         repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "existing_file.txt").write_text("existing content")
-        (repo_path / "subdir").mkdir()
-        (repo_path / "subdir" / "nested.txt").write_text("nested content")
+        self._make_nested_repo(repo_path)
 
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
-             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory") as mock_clean:
+             patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
-            config.clone_to_path(repo_path, clean=True)  # Should not raise any exceptions
+            config.clone_to_path(repo_path, clean=True)
 
-            mock_clean.assert_called_once_with(repo_path)
+            mock_input.assert_not_called()
+            assert repo_path.exists(), "Directory itself should still exist"
+            assert list(repo_path.iterdir()) == [], "All nested contents should be removed"
 
-    def test_clean_flag_does_not_prompt_user(self, tmp_path):
-        """Test that clean=True does not call input() for user confirmation."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
+    def test_no_clean_flag_prompts_user_confirm_yes(self, tmp_path):
+        """Test that clean=False prompts user and cleans nested contents when user enters 'y'."""
+        config = self._make_config()
         repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "existing_file.txt").write_text("existing content")
+        self._make_nested_repo(repo_path)
 
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
-             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory"), \
+             patch("builtins.input", return_value="y"):
+            mock_run.return_value = 0
+
+            config.clone_to_path(repo_path, clean=False)
+
+            assert repo_path.exists(), "Directory itself should still exist"
+            assert list(repo_path.iterdir()) == [], "All nested contents should be removed"
+
+    def test_no_clean_flag_prompts_user_confirm_no_preserves_contents(self, tmp_path):
+        """Test that declining the prompt preserves all nested contents."""
+        config = self._make_config()
+        repo_path = tmp_path / "repo"
+        self._make_nested_repo(repo_path)
+
+        original_contents = {p.name for p in repo_path.rglob("*")}
+
+        with patch("builtins.input", return_value="n"):
+            with pytest.raises(PluginFactoryError, match="aborted by user"):
+                config.clone_to_path(repo_path, clean=False)
+
+        remaining_contents = {p.name for p in repo_path.rglob("*")}
+        assert remaining_contents == original_contents, "No files should have been removed"
+
+    def test_no_clean_flag_empty_input_preserves_contents(self, tmp_path):
+        """Test that pressing Enter without input preserves all nested contents."""
+        config = self._make_config()
+        repo_path = tmp_path / "repo"
+        self._make_nested_repo(repo_path)
+
+        original_contents = {p.name for p in repo_path.rglob("*")}
+
+        with patch("builtins.input", return_value=""):
+            with pytest.raises(PluginFactoryError, match="aborted by user"):
+                config.clone_to_path(repo_path, clean=False)
+
+        remaining_contents = {p.name for p in repo_path.rglob("*")}
+        assert remaining_contents == original_contents, "No files should have been removed"
+
+    def test_empty_directory_skips_clean_and_prompt(self, tmp_path):
+        """Test that an empty directory skips both clean and user prompt."""
+        config = self._make_config()
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
              patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
@@ -343,189 +434,82 @@ class TestSourceConfigCloneToPathClean:
 
             mock_input.assert_not_called()
 
-    def test_no_clean_flag_prompts_user_confirm_yes(self, tmp_path):
-        """Test that clean=False prompts user and proceeds when user enters 'y'."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "existing_file.txt").write_text("existing content")
-
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
-             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory") as mock_clean, \
-             patch("builtins.input", return_value="y"):
-            mock_run.return_value = 0
-
-            config.clone_to_path(repo_path, clean=False)  # Should not raise any exceptions
-
-            mock_clean.assert_called_once_with(repo_path)
-
-    def test_no_clean_flag_prompts_user_confirm_no(self, tmp_path):
-        """Test that clean=False prompts user and raises PluginFactoryError when user declines."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "existing_file.txt").write_text("existing content")
-
-        with patch("builtins.input", return_value="n") as mock_input:
-            with pytest.raises(PluginFactoryError, match="aborted by user"):
-                config.clone_to_path(repo_path, clean=False)
-
-            mock_input.assert_called_once()
-
-    def test_no_clean_flag_prompts_user_empty_input_aborts(self, tmp_path):
-        """Test that clean=False raises PluginFactoryError when user presses Enter without typing anything."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "existing_file.txt").write_text("existing content")
-
-        with patch("builtins.input", return_value=""):
-            with pytest.raises(PluginFactoryError, match="aborted by user"):
-                config.clone_to_path(repo_path, clean=False)
-
-    def test_empty_directory_skips_clean_and_prompt(self, tmp_path):
-        """Test that an empty directory skips both clean and prompt logic."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        # Directory is empty
-
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
-             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory") as mock_clean, \
-             patch("builtins.input") as mock_input:
-            mock_run.return_value = 0
-
-            config.clone_to_path(repo_path, clean=True)  # Should not raise
-
-            mock_clean.assert_not_called()
-            mock_input.assert_not_called()
-
     def test_empty_directory_no_clean_flag_skips_prompt(self, tmp_path):
         """Test that an empty directory with clean=False does not prompt user."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
+        config = self._make_config()
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
-        # Directory is empty
 
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
              patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
-            config.clone_to_path(repo_path, clean=False)  # Should not raise any exceptions]
+            config.clone_to_path(repo_path, clean=False)
 
             mock_input.assert_not_called()
 
     def test_clean_flag_default_is_false(self, tmp_path):
         """Test that the clean parameter defaults to False."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
+        config = self._make_config()
         repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "existing_file.txt").write_text("existing content")
+        self._make_nested_repo(repo_path)
 
         with patch("builtins.input", return_value="n"):
-            # Call without clean argument - should prompt and raise PluginFactoryError when user declines
             with pytest.raises(PluginFactoryError, match="aborted by user"):
                 config.clone_to_path(repo_path)
 
     def test_clean_proceeds_with_clone_after_cleaning(self, tmp_path):
-        """Test that after cleaning, git clone and checkout are executed."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="v1.0.0",
-            workspace_path="."
-        )
-
+        """Test that after cleaning nested contents, git clone and checkout are executed."""
+        config = self._make_config(repo_ref="v1.0.0")
         repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "old_file.txt").write_text("old content")
+        self._make_nested_repo(repo_path)
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
-             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory"):
+        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
             mock_run.return_value = 0
 
-            config.clone_to_path(repo_path, clean=True)  # Should not raise any exceptions
+            config.clone_to_path(repo_path, clean=True)
 
-            assert mock_run.call_count == 2  # clone + checkout
+            assert list(repo_path.iterdir()) == [], "Directory should be empty before clone runs"
+            assert mock_run.call_count == 2
 
-            # Verify clone command
             clone_call = mock_run.call_args_list[0]
             assert clone_call[0][0] == ["git", "clone", "https://github.com/testowner/testrepo", str(repo_path)]
 
-            # Verify checkout command
             checkout_call = mock_run.call_args_list[1]
             assert checkout_call[0][0] == ["git", "checkout", "v1.0.0"]
 
     def test_prompt_confirm_yes_proceeds_with_clone(self, tmp_path):
-        """Test that after user confirms 'y', git clone and checkout are executed."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
+        """Test that after user confirms 'y', nested contents are cleaned and clone/checkout run."""
+        config = self._make_config()
         repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "old_file.txt").write_text("old content")
+        self._make_nested_repo(repo_path)
 
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
-             patch("src.rhdh_dynamic_plugin_factory.config.clean_directory"), \
              patch("builtins.input", return_value="y"):
             mock_run.return_value = 0
 
-            config.clone_to_path(repo_path, clean=False)  # Should not raise any exceptions
+            config.clone_to_path(repo_path, clean=False)
 
-            assert mock_run.call_count == 2  # clone + checkout
+            assert list(repo_path.iterdir()) == [], "Directory should be empty before clone runs"
+            assert mock_run.call_count == 2
 
     def test_prompt_confirm_no_does_not_clone(self, tmp_path):
-        """Test that when user declines, git clone is not executed."""
-        config = SourceConfig(
-            repo="https://github.com/testowner/testrepo",
-            repo_ref="main",
-            workspace_path="."
-        )
-
+        """Test that when user declines, no nested contents are removed and clone does not run."""
+        config = self._make_config()
         repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        (repo_path / "existing_file.txt").write_text("existing content")
+        self._make_nested_repo(repo_path)
+
+        original_contents = {p.name for p in repo_path.rglob("*")}
 
         with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
              patch("builtins.input", return_value="n"):
-
             with pytest.raises(PluginFactoryError, match="aborted by user"):
                 config.clone_to_path(repo_path, clean=False)
 
             mock_run.assert_not_called()
 
+        remaining_contents = {p.name for p in repo_path.rglob("*")}
+        assert remaining_contents == original_contents, "No files should have been removed"
 
 class TestDiscoverSourceConfigCliArgs:
     """Tests for PluginFactoryConfig.discover_source_config with CLI args."""
@@ -584,22 +568,15 @@ class TestDiscoverSourceConfigCliArgs:
         assert source_config.repo == "https://github.com/awslabs/backstage-plugins-for-aws"
         assert source_config.repo_ref == "78df9399a81cfd95265cab53815f54210b1d7f50"
     
-    def test_workspace_path_from_source_json(self, tmp_path, monkeypatch):
+    def test_workspace_path_from_source_json(self, tmp_path, monkeypatch, write_source_json):
         """Test that workspace_path is resolved from source.json when not provided via CLI."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
         
         config_dir = tmp_path / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
         source_dir = tmp_path / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create source.json with workspace-path
-        source_data = {
-            "repo": "https://github.com/test/repo",
-            "repo-ref": "main",
-            "workspace-path": "workspaces/todo"
-        }
-        (config_dir / "source.json").write_text(json.dumps(source_data))
+        write_source_json(config_dir, "https://github.com/test/repo", "main", "workspaces/todo")
         
         config = PluginFactoryConfig(
             rhdh_cli_version="1.7.2",

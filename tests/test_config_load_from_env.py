@@ -26,14 +26,12 @@ class TestPluginFactoryConfigLoadFromEnv:
         
         # Ensure environment variables are set
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
         
         # Load configuration
         config = PluginFactoryConfig.load_from_env(mock_args)
         
         # Verify all required fields are set
         assert config.rhdh_cli_version == "1.7.2"
-        assert config.log_level == "INFO"
         assert config.config_dir == setup_test_env["config_dir"]
         assert config.repo_path == setup_test_env["source_dir"]
         assert config.workspace_path == "."
@@ -51,7 +49,6 @@ class TestPluginFactoryConfigLoadFromEnv:
     def test_load_from_env_missing_rhdh_cli_version(self, mock_args, setup_test_env, clean_env):
         """Test that missing RHDH_CLI_VERSION raises ConfigurationError."""
         # Don't set RHDH_CLI_VERSION
-        clean_env.setenv("WORKSPACE_PATH", ".")
         
         mock_args.config_dir = setup_test_env["config_dir"]
         mock_args.repo_path = setup_test_env["source_dir"]
@@ -62,41 +59,10 @@ class TestPluginFactoryConfigLoadFromEnv:
             with pytest.raises(ConfigurationError, match="RHDH_CLI_VERSION must be set"):
                 PluginFactoryConfig.load_from_env(mock_args)
     
-    def test_load_from_env_invalid_log_level(self, mock_args, setup_test_env, monkeypatch):
-        """Test that invalid log level raises ConfigurationError."""
-        # Set required environment variables
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        monkeypatch.setenv("LOG_LEVEL", "INVALID_LEVEL")
-        
-        mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["source_dir"]
-        mock_args.workspace_path = "."
-        mock_args.log_level = "INVALID_LEVEL"
-        
-        with pytest.raises(ConfigurationError, match="Invalid log level"):
-            PluginFactoryConfig.load_from_env(mock_args)
-    
-    @pytest.mark.parametrize("log_level", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
-    def test_load_from_env_valid_log_levels(self, mock_args, setup_test_env, monkeypatch, log_level):
-        """Test that all valid log levels are accepted."""
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        monkeypatch.setenv("LOG_LEVEL", log_level)
-        
-        mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["source_dir"]
-        mock_args.workspace_path = "."
-        mock_args.log_level = log_level
-        
-        config = PluginFactoryConfig.load_from_env(mock_args)
-        assert config.log_level == log_level
-    
     def test_load_from_env_environment_variable_precedence(self, mock_args, setup_test_env, clean_env, tmp_path):
         """Test that custom .env file with override=True overrides environment variables."""
         # Set initial environment variables
         clean_env.setenv("RHDH_CLI_VERSION", "1.7.2")
-        clean_env.setenv("WORKSPACE_PATH", ".")
         
         # Create a custom .env file with different values
         # Since load_dotenv is called with override=True, these values should win
@@ -124,9 +90,6 @@ class TestPluginFactoryConfigLoadFromEnv:
             "REGISTRY_NAMESPACE=test-namespace\n"
         )
         
-        # Set required variables
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
-        
         mock_args.config_dir = setup_test_env["config_dir"]
         mock_args.repo_path = setup_test_env["source_dir"]
         mock_args.workspace_path = "."
@@ -152,29 +115,9 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config.registry_url == "quay.io"
         assert config.registry_namespace == "test-namespace"
     
-    def test_load_from_env_missing_workspace_path_deferred(self, mock_args, setup_test_env, monkeypatch):
-        """Test that missing workspace_path is allowed during load_from_env.
-        
-        workspace_path validation is deferred to cli._run() because it may be
-        resolved later from source.json's workspace-path field.
-        """
-        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        # Don't set WORKSPACE_PATH env var
-        monkeypatch.delenv("WORKSPACE_PATH", raising=False)
-        
-        mock_args.config_dir = setup_test_env["config_dir"]
-        mock_args.repo_path = setup_test_env["source_dir"]
-        mock_args.workspace_path = None  # Missing workspace_path
-        
-        # Should not raise -- workspace_path validation is deferred
-        config = PluginFactoryConfig.load_from_env(mock_args)
-        
-        assert config.workspace_path == ""  # Empty, to be resolved later
-    
     def test_load_from_env_directory_creation(self, mock_args, tmp_path, monkeypatch):
         """Test that config_dir and repo_path directories are created."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
         
         # Use non-existent directories
         new_config_dir = tmp_path / "new_config"
@@ -202,7 +145,6 @@ class TestPluginFactoryConfigLoadFromEnv:
     def test_load_from_env_registry_config_from_environment(self, mock_args, setup_test_env, monkeypatch):
         """Test that registry configuration is loaded from environment variables."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
         monkeypatch.setenv("REGISTRY_URL", "quay.io")
         monkeypatch.setenv("REGISTRY_USERNAME", "test_user")
         monkeypatch.setenv("REGISTRY_PASSWORD", "test_pass")
@@ -225,7 +167,6 @@ class TestPluginFactoryConfigLoadFromEnv:
     def test_load_from_env_registry_insecure_false(self, mock_args, setup_test_env, monkeypatch):
         """Test that REGISTRY_INSECURE defaults to False."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
         monkeypatch.setenv("REGISTRY_INSECURE", "false")
         
         mock_args.config_dir = setup_test_env["config_dir"]
@@ -239,7 +180,6 @@ class TestPluginFactoryConfigLoadFromEnv:
     def test_load_from_env_use_local_flag(self, mock_args, setup_test_env, monkeypatch):
         """Test that use_local flag is loaded from args."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
         
         mock_args.config_dir = setup_test_env["config_dir"]
         mock_args.repo_path = setup_test_env["source_dir"]
@@ -253,7 +193,6 @@ class TestPluginFactoryConfigLoadFromEnv:
     def test_load_from_env_source_json_missing_repo_path_empty(self, mock_args, tmp_path, monkeypatch):
         """Test that missing source.json with empty repo_path raises ConfigurationError."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
         
         # Create empty directories
         config_dir = tmp_path / "config"
@@ -273,7 +212,6 @@ class TestPluginFactoryConfigLoadFromEnv:
     def test_load_from_env_source_json_missing_repo_path_has_content(self, mock_args, tmp_path, monkeypatch):
         """Test that missing source.json with non-empty repo_path logs warning but passes."""
         monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-        monkeypatch.setenv("WORKSPACE_PATH", ".")
         
         # Create config dir without source.json
         config_dir = tmp_path / "config"

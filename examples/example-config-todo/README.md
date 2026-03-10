@@ -69,7 +69,6 @@ From the repository root, run:
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./examples/example-config-todo \
   --repo-path ./source \
-  --workspace-path workspaces/todo \
   --output-dir ./outputs
 ```
 

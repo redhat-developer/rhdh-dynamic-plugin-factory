@@ -11,7 +11,10 @@ from .cli import main, create_parser
 from .config import (
     PluginFactoryConfig,
     SourceConfig,
+    WorkspaceInfo,
     PluginListConfig,
+    discover_workspaces,
+    clone_workspaces_with_worktrees,
 )
 from .exceptions import (
     PluginFactoryError,
@@ -27,6 +30,8 @@ from .utils import (
     run_command_with_streaming,
     display_export_results,
     clean_directory,
+    prompt_or_clean_directory,
+    repo_dir_name,
 )
 
 __all__ = [
@@ -37,7 +42,10 @@ __all__ = [
     # Configuration
     "PluginFactoryConfig",
     "SourceConfig",
+    "WorkspaceInfo",
     "PluginListConfig",
+    "discover_workspaces",
+    "clone_workspaces_with_worktrees",
     
     # Exceptions
     "PluginFactoryError",
@@ -53,6 +61,8 @@ __all__ = [
     "run_command_with_streaming",
     "display_export_results",
     "clean_directory",
+    "prompt_or_clean_directory",
+    "repo_dir_name",
     # Version
     "__version__",
 ]

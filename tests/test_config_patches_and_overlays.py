@@ -33,14 +33,15 @@ class TestApplyPatchesAndOverlays:
                 call_args = mock_run_cmd.call_args
                 
                 cmd = call_args[0][0]
+                expected_repo_root = os.path.abspath(config.repo_path)
+                expected_workspace = os.path.abspath(os.path.join(config.repo_path, config.workspace_path))
                 assert len(cmd) == 3
                 assert cmd[0] == str(script_path.absolute())
                 assert cmd[1] == os.path.abspath(config.config_dir)
-                expected_workspace = os.path.abspath(os.path.join(config.repo_path, config.workspace_path))
                 assert cmd[2] == expected_workspace
                 
                 assert call_args[0][1] == config.logger
-                assert call_args[1]["cwd"] == Path(expected_workspace)
+                assert call_args[1]["cwd"] == Path(expected_repo_root)
                 assert call_args[1]["stderr_log_func"] == config.logger.error
     
     def test_apply_patches_and_overlays_script_not_found(self, make_config):

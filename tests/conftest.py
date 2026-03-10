@@ -12,6 +12,23 @@ from dotenv import dotenv_values
 from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
 
 
+def _write_source_json(directory: Path, repo: str, repo_ref: str, workspace_path: str = ".") -> None:
+    """Write a source.json file into the given directory, creating it if needed."""
+    directory.mkdir(parents=True, exist_ok=True)
+    data = {"repo": repo, "repo-ref": repo_ref, "workspace-path": workspace_path}
+    (directory / "source.json").write_text(json.dumps(data))
+
+
+@pytest.fixture
+def write_source_json():
+    """Factory fixture that returns a helper to write source.json files.
+
+    Usage:
+        write_source_json(directory, repo, repo_ref, workspace_path=".")
+    """
+    return _write_source_json
+
+
 @pytest.fixture
 def mock_logger():
     """Create a mocked logger to avoid output during tests."""
@@ -29,7 +46,6 @@ def mock_args(tmp_path):
         workspace_path=".",
         config_dir=tmp_path / "config",
         repo_path=tmp_path / "workspace",
-        log_level="INFO",
         use_local=False,
         push_images=False,
         output_dir=str(tmp_path / "outputs"),
@@ -61,21 +77,13 @@ def valid_default_env(monkeypatch):
 @pytest.fixture
 def valid_source_json(tmp_path: Path):
     """Create a valid source.json file."""
-    source_data = {
-        "repo": "https://github.com/awslabs/backstage-plugins-for-aws",
-        "repo-ref": "78df9399a81cfd95265cab53815f54210b1d7f50",
-        "workspace-path": ".",
-        "repo-flat": True,
-        "repo-backstage-version": "1.42.5"
-    }
-    
     config_dir = tmp_path / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    
-    source_file = config_dir / "source.json"
-    source_file.write_text(json.dumps(source_data, indent=2))
-    
-    return source_file
+    _write_source_json(
+        config_dir,
+        "https://github.com/awslabs/backstage-plugins-for-aws",
+        "78df9399a81cfd95265cab53815f54210b1d7f50",
+    )
+    return config_dir / "source.json"
 
 
 @pytest.fixture
@@ -136,14 +144,11 @@ def setup_test_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     source_dir.mkdir(parents=True, exist_ok=True)
     
     # Create source.json
-    source_data = {
-        "repo": "https://github.com/awslabs/backstage-plugins-for-aws",
-        "repo-ref": "78df9399a81cfd95265cab53815f54210b1d7f50",
-        "workspace-path": ".",
-        "repo-flat": True,
-        "repo-backstage-version": "1.42.5"
-    }
-    (config_dir / "source.json").write_text(json.dumps(source_data, indent=2))
+    _write_source_json(
+        config_dir,
+        "https://github.com/awslabs/backstage-plugins-for-aws",
+        "78df9399a81cfd95265cab53815f54210b1d7f50",
+    )
     
     # Create plugins-list.yaml
     plugins_content = """plugins/ecs/frontend:
@@ -153,7 +158,6 @@ plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common
     
     # Set common environment variables
     monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-    monkeypatch.setenv("WORKSPACE_PATH", ".")
     
     return {
         "config_dir": str(config_dir),
@@ -168,8 +172,6 @@ def clean_env(monkeypatch: pytest.MonkeyPatch):
     # Remove all relevant environment variables
     env_vars = [
         "RHDH_CLI_VERSION",
-        "LOG_LEVEL",
-        "WORKSPACE_PATH",
         "REGISTRY_URL",
         "REGISTRY_USERNAME",
         "REGISTRY_PASSWORD",
