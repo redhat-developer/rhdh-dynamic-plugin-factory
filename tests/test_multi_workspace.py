@@ -11,8 +11,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
-from src.rhdh_dynamic_plugin_factory.config import (
-    PluginFactoryConfig,
+from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+from src.rhdh_dynamic_plugin_factory.source_config import (
     SourceConfig,
     WorkspaceInfo,
     discover_workspaces,
@@ -356,7 +356,7 @@ class TestCloneWorkspacesWithWorktrees:
             output_dir=tmp_path / "out" / "ws2",
         )
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming", return_value=0) as mock_stream:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming", return_value=0) as mock_stream:
             clone_workspaces_with_worktrees([ws1, ws2], base_repo)
             
             cmds = [c[0][0] for c in mock_stream.call_args_list]
@@ -378,7 +378,7 @@ class TestCloneWorkspacesWithWorktrees:
             repo_path=None,
         )
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming", return_value=0):
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming", return_value=0):
             with pytest.raises(PluginFactoryError, match="no resolved repository path"):
                 clone_workspaces_with_worktrees([ws], base_repo)
     
@@ -395,7 +395,7 @@ class TestCloneWorkspacesWithWorktrees:
             output_dir=tmp_path / "out" / "ws1",
         )
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming", return_value=128):
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming", return_value=128):
             with pytest.raises(ExecutionError, match="Failed to clone repository"):
                 clone_workspaces_with_worktrees([ws], base_repo)
     
@@ -419,7 +419,7 @@ class TestCloneWorkspacesWithWorktrees:
             output_dir=tmp_path / "out" / "ws2",
         )
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming", return_value=0) as mock_stream:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming", return_value=0) as mock_stream:
             clone_workspaces_with_worktrees([ws1, ws2], base_repo)
             
             cmds = [c[0][0] for c in mock_stream.call_args_list]

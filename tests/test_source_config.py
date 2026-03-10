@@ -10,7 +10,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
-from src.rhdh_dynamic_plugin_factory.config import SourceConfig, PluginFactoryConfig
+from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+from src.rhdh_dynamic_plugin_factory.source_config import SourceConfig
 from src.rhdh_dynamic_plugin_factory.exceptions import ConfigurationError, ExecutionError, PluginFactoryError
 
 class TestSourceConfigFromFile:
@@ -212,7 +213,7 @@ class TestSourceConfigCloneToPath:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run:
             mock_run.return_value = 0
             
             config.clone_to_path(repo_path)  # Should not raise any exceptions
@@ -246,7 +247,7 @@ class TestSourceConfigCloneToPath:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run:
             mock_run.return_value = 0
             
             config.clone_to_path(repo_path)
@@ -286,7 +287,7 @@ class TestSourceConfigCloneToPath:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run:
             mock_run.return_value = 1  # Failed
             
             with pytest.raises(ExecutionError, match="Failed to clone repository"):
@@ -303,7 +304,7 @@ class TestSourceConfigCloneToPath:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run:
             # First call (clone) succeeds, second call (checkout) fails
             mock_run.side_effect = [0, 1]
             
@@ -321,7 +322,7 @@ class TestSourceConfigCloneToPath:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run:
             mock_run.side_effect = Exception("Test exception")
             
             with pytest.raises(ExecutionError, match="Failed during repository clone/checkout"):
@@ -365,7 +366,7 @@ class TestSourceConfigCloneToPathClean:
         repo_path = tmp_path / "repo"
         self._make_nested_repo(repo_path)
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run, \
              patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
@@ -381,7 +382,7 @@ class TestSourceConfigCloneToPathClean:
         repo_path = tmp_path / "repo"
         self._make_nested_repo(repo_path)
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run, \
              patch("builtins.input", return_value="y"):
             mock_run.return_value = 0
 
@@ -426,7 +427,7 @@ class TestSourceConfigCloneToPathClean:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run, \
              patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
@@ -440,7 +441,7 @@ class TestSourceConfigCloneToPathClean:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run, \
              patch("builtins.input") as mock_input:
             mock_run.return_value = 0
 
@@ -464,7 +465,7 @@ class TestSourceConfigCloneToPathClean:
         repo_path = tmp_path / "repo"
         self._make_nested_repo(repo_path)
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run:
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run:
             mock_run.return_value = 0
 
             config.clone_to_path(repo_path, clean=True)
@@ -484,7 +485,7 @@ class TestSourceConfigCloneToPathClean:
         repo_path = tmp_path / "repo"
         self._make_nested_repo(repo_path)
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run, \
              patch("builtins.input", return_value="y"):
             mock_run.return_value = 0
 
@@ -501,7 +502,7 @@ class TestSourceConfigCloneToPathClean:
 
         original_contents = {p.name for p in repo_path.rglob("*")}
 
-        with patch("src.rhdh_dynamic_plugin_factory.config.run_command_with_streaming") as mock_run, \
+        with patch("src.rhdh_dynamic_plugin_factory.source_config.run_command_with_streaming") as mock_run, \
              patch("builtins.input", return_value="n"):
             with pytest.raises(PluginFactoryError, match="aborted by user"):
                 config.clone_to_path(repo_path, clean=False)
