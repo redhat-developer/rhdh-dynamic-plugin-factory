@@ -3,3 +3,10 @@ description: Development workflow commands and processes for the rhdh-dynamic-pl
 globs:
 alwaysApply: true
 ---
+
+## Dependency Management
+
+When adding new Python dependencies:
+1. Install using the `.venv` virtual environment: `.venv/bin/pip install <package>`
+2. Update `requirements.txt` (runtime deps) or `requirements.dev.txt` (dev/test deps) to reflect the change
+3. Verify the installed version matches what is recorded in the requirements file

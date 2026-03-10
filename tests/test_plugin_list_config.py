@@ -4,6 +4,7 @@ Unit tests for PluginListConfig class.
 Tests the plugin list configuration loading and management.
 """
 
+import json
 import yaml
 import pytest
 
@@ -155,3 +156,220 @@ class TestPluginListConfigRemovePlugin:
         
         # Original plugin should still be there
         assert "plugins/test1" in config.plugins
+
+
+class TestPluginListConfigToFile:
+    """Tests for PluginListConfig.to_file method."""
+
+    def test_to_file_with_args(self, tmp_path):
+        """Test writing plugins with build args."""
+        config = PluginListConfig({
+            "plugins/ecs/frontend": "",
+            "plugins/ecs/backend": "--embed-package @aws/aws-core-plugin-for-backstage-common",
+        })
+        out = tmp_path / "plugins-list.yaml"
+        config.to_file(out)
+
+        lines = out.read_text().splitlines()
+        assert lines[0] == "plugins/ecs/frontend:"
+        assert lines[1] == "plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common"
+
+    def test_to_file_empty_plugins(self, tmp_path):
+        """Test writing empty plugins dict produces empty file."""
+        config = PluginListConfig({})
+        out = tmp_path / "plugins-list.yaml"
+        config.to_file(out)
+
+        assert out.read_text() == ""
+
+    def test_to_file_roundtrip(self, tmp_path):
+        """Test that to_file output can be read back by from_file."""
+        original = PluginListConfig({
+            "plugins/todo": "",
+            "plugins/todo-backend": "",
+            "plugins/ecs/backend": "--embed-package @aws/common --embed-package @aws/node",
+        })
+        out = tmp_path / "plugins-list.yaml"
+        original.to_file(out)
+
+        loaded = PluginListConfig.from_file(out)
+        assert loaded.get_plugins() == original.get_plugins()
+
+    def test_to_file_null_values_format(self, tmp_path):
+        """Test that empty args produce 'key:' (YAML null) not 'key: \"\"'."""
+        config = PluginListConfig({"plugins/test": ""})
+        out = tmp_path / "plugins-list.yaml"
+        config.to_file(out)
+
+        content = out.read_text()
+        assert "plugins/test:" in content
+        assert "''" not in content
+        assert '""' not in content
+
+
+def _make_plugin_dir(base, rel_path, name, role):
+    """Helper to create a plugin directory with a package.json."""
+    plugin_dir = base / rel_path
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    pkg = {"name": name, "version": "1.0.0", "backstage": {"role": role}}
+    (plugin_dir / "package.json").write_text(json.dumps(pkg))
+    return plugin_dir
+
+
+class TestPluginListConfigCreateDefault:
+    """Tests for PluginListConfig.create_default method."""
+
+    def test_discovers_backend_plugin(self, tmp_path):
+        """Test discovering a backend plugin."""
+        _make_plugin_dir(tmp_path, "plugins/todo-backend", "@backstage/plugin-todo-backend", "backend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert "plugins/todo-backend" in plugins
+        assert plugins["plugins/todo-backend"] == ""
+
+    def test_discovers_frontend_plugin(self, tmp_path):
+        """Test discovering a frontend plugin."""
+        _make_plugin_dir(tmp_path, "plugins/todo", "@backstage/plugin-todo", "frontend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+
+        assert "plugins/todo" in config.get_plugins()
+
+    def test_discovers_plugin_modules(self, tmp_path):
+        """Test discovering frontend and backend plugin modules."""
+        _make_plugin_dir(tmp_path, "plugins/auth-backend-module-github", "@backstage/plugin-auth-backend-module-github", "backend-plugin-module")
+        _make_plugin_dir(tmp_path, "plugins/catalog-react-module", "@backstage/plugin-catalog-react-module", "frontend-plugin-module")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert "plugins/auth-backend-module-github" in plugins
+        assert "plugins/catalog-react-module" in plugins
+
+    def test_ignores_non_plugin_roles(self, tmp_path):
+        """Test that packages with roles like 'node-library' or 'common-library' are skipped."""
+        _make_plugin_dir(tmp_path, "packages/backend-defaults", "@backstage/backend-defaults", "node-library")
+        _make_plugin_dir(tmp_path, "packages/catalog-common", "@backstage/catalog-common", "common-library")
+
+        config = PluginListConfig.create_default(tmp_path)
+
+        assert config.get_plugins() == {}
+
+    def test_ignores_package_without_backstage_field(self, tmp_path):
+        """Test that package.json without backstage field is skipped."""
+        pkg_dir = tmp_path / "packages" / "some-lib"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "package.json").write_text(json.dumps({"name": "some-lib", "version": "1.0.0"}))
+
+        config = PluginListConfig.create_default(tmp_path)
+
+        assert config.get_plugins() == {}
+
+    def test_skips_node_modules(self, tmp_path):
+        """Test that plugins inside node_modules are not discovered."""
+        nm = tmp_path / "node_modules" / "@backstage" / "plugin-todo"
+        nm.mkdir(parents=True)
+        (nm / "package.json").write_text(json.dumps({
+            "name": "@backstage/plugin-todo",
+            "backstage": {"role": "frontend-plugin"},
+        }))
+
+        config = PluginListConfig.create_default(tmp_path)
+
+        assert config.get_plugins() == {}
+
+    def test_skips_hidden_directories(self, tmp_path):
+        """Test that plugins inside hidden directories are not discovered."""
+        hidden = tmp_path / ".hidden" / "plugin-todo"
+        hidden.mkdir(parents=True)
+        (hidden / "package.json").write_text(json.dumps({
+            "name": "@test/plugin-todo",
+            "backstage": {"role": "frontend-plugin"},
+        }))
+
+        config = PluginListConfig.create_default(tmp_path)
+
+        assert config.get_plugins() == {}
+
+    def test_skips_dist_directories(self, tmp_path):
+        """Test that dist and dist-dynamic directories are skipped."""
+        for d in ["dist", "dist-dynamic"]:
+            dist = tmp_path / d / "plugin-todo"
+            dist.mkdir(parents=True)
+            (dist / "package.json").write_text(json.dumps({
+                "name": "@test/plugin-todo",
+                "backstage": {"role": "frontend-plugin"},
+            }))
+
+        config = PluginListConfig.create_default(tmp_path)
+
+        assert config.get_plugins() == {}
+
+    def test_discovers_nested_plugins(self, tmp_path):
+        """Test discovering plugins in nested directory structures like plugins/ecs/backend."""
+        _make_plugin_dir(tmp_path, "plugins/ecs/frontend", "@aws/ecs-frontend", "frontend-plugin")
+        _make_plugin_dir(tmp_path, "plugins/ecs/backend", "@aws/ecs-backend", "backend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert len(plugins) == 2
+        assert "plugins/ecs/frontend" in plugins
+        assert "plugins/ecs/backend" in plugins
+
+    def test_results_sorted_alphabetically(self, tmp_path):
+        """Test that discovered plugins are sorted by path."""
+        _make_plugin_dir(tmp_path, "plugins/z-plugin", "@test/z-plugin", "frontend-plugin")
+        _make_plugin_dir(tmp_path, "plugins/a-plugin", "@test/a-plugin", "backend-plugin")
+        _make_plugin_dir(tmp_path, "plugins/m-plugin", "@test/m-plugin", "frontend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+        paths = list(config.get_plugins().keys())
+
+        assert paths == ["plugins/a-plugin", "plugins/m-plugin", "plugins/z-plugin"]
+
+    def test_empty_workspace(self, tmp_path):
+        """Test scanning an empty workspace returns no plugins."""
+        config = PluginListConfig.create_default(tmp_path)
+
+        assert config.get_plugins() == {}
+
+    def test_malformed_package_json_skipped(self, tmp_path):
+        """Test that a malformed package.json does not crash discovery."""
+        bad_dir = tmp_path / "plugins" / "broken"
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "package.json").write_text("{ not valid json")
+
+        _make_plugin_dir(tmp_path, "plugins/good", "@test/good", "backend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert len(plugins) == 1
+        assert "plugins/good" in plugins
+
+    def test_todo_workspace_structure(self, tmp_path):
+        """Test a workspace matching the community-plugins todo example."""
+        _make_plugin_dir(tmp_path, "plugins/todo", "@backstage-community/plugin-todo", "frontend-plugin")
+        _make_plugin_dir(tmp_path, "plugins/todo-backend", "@backstage-community/plugin-todo-backend", "backend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert plugins == {"plugins/todo": "", "plugins/todo-backend": ""}
+
+    def test_aws_ecs_workspace_structure(self, tmp_path):
+        """Test a workspace matching the AWS ECS plugins example (nested dirs)."""
+        _make_plugin_dir(tmp_path, "plugins/ecs/frontend", "@aws/amazon-ecs-plugin-for-backstage", "frontend-plugin")
+        _make_plugin_dir(tmp_path, "plugins/ecs/backend", "@aws/amazon-ecs-plugin-for-backstage-backend", "backend-plugin")
+        # Also has common/node packages that should be ignored (not plugin roles)
+        _make_plugin_dir(tmp_path, "plugins/ecs/common", "@aws/aws-core-plugin-for-backstage-common", "common-library")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert len(plugins) == 2
+        assert "plugins/ecs/frontend" in plugins
+        assert "plugins/ecs/backend" in plugins

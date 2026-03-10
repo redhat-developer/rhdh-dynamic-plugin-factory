@@ -20,6 +20,8 @@ from .utils import run_command_with_streaming, display_export_results, prompt_or
 @dataclass
 class PluginFactoryConfig:
     """Main configuration for the plugin factory."""
+    PLUGIN_LIST_FILE: ClassVar[str] = "plugins-list.yaml"
+    SOURCE_CONFIG_FILE: ClassVar[str] = "source.json"
     
     # Required fields loaded from default.env file (can be overridden by environment variables)
     rhdh_cli_version: str = field(default="")
@@ -216,35 +218,35 @@ class PluginFactoryConfig:
         CLI args fully replace source.json.
         """
         if self.source_repo:
-            self.logger.debug("Using --source-repo CLI argument, skipping source.json validation")
+            self.logger.debug(f"Using --source-repo CLI argument, skipping {self.SOURCE_CONFIG_FILE} validation")
             return
         
-        source_file = os.path.join(self.config_dir, "source.json")
+        source_file = os.path.join(self.config_dir, self.SOURCE_CONFIG_FILE)
         
         if not os.path.exists(source_file):
             if not os.path.exists(self.repo_path) or not os.listdir(self.repo_path):
                 raise ConfigurationError(
-                    f"source.json not found at {source_file} and {self.repo_path} is empty. "
-                    "Please provide source.json to clone a repository, use --source-repo to specify a repository via CLI, "
+                    f"{self.SOURCE_CONFIG_FILE} not found at {source_file} and {self.repo_path} is empty. "
+                    "Please provide {self.SOURCE_CONFIG_FILE} to clone a repository, use --source-repo to specify a repository via CLI, "
                     "or use --use-local with a locally mounted repository."
                 )
             else:
                 self.logger.warning(
-                    f"source.json not found at {source_file}. Will attempt to use local repository content at {self.repo_path}"
+                    f"{self.SOURCE_CONFIG_FILE} not found at {source_file}. Will attempt to use local repository content at {self.repo_path}"
                 )
         else:
             self.logger.debug(f"Using source configuration from: {source_file}")
     
     def _validate_plugins_list(self) -> None:
         """Validate plugins-list.yaml file existence."""
-        plugins_file = os.path.join(self.config_dir, "plugins-list.yaml")
+        plugins_file = os.path.join(self.config_dir, self.PLUGIN_LIST_FILE)
         
         if not os.path.exists(plugins_file):
             self.logger.warning(
-                f"plugins-list.yaml not found at {plugins_file}. Will attempt to auto-generate after repository is available."
+                f"{self.PLUGIN_LIST_FILE} not found at {plugins_file}. Will attempt to auto-generate after repository is available."
             )
         else:
-            self.logger.debug(f"Using plugins-list.yaml from: {plugins_file}")
+            self.logger.debug(f"Using {self.PLUGIN_LIST_FILE} from: {plugins_file}")
     
     def auto_generate_plugins_list(self, config_dir: Optional[str] = None,
                                     repo_path: Optional[str] = None,
@@ -263,13 +265,13 @@ class PluginFactoryConfig:
         repo_path = repo_path or self.repo_path
         workspace_path = workspace_path or self.workspace_path
         
-        plugins_file = os.path.join(config_dir, "plugins-list.yaml")
+        plugins_file = os.path.join(config_dir, self.PLUGIN_LIST_FILE)
         
         if os.path.exists(plugins_file):
-            self.logger.debug(f"[green]plugins-list.yaml already exists at {plugins_file}. Skipping auto-generation.[/green]")
+            self.logger.debug(f"[green]{self.PLUGIN_LIST_FILE} already exists at {plugins_file}. Skipping auto-generation.[/green]")
             return
         
-        self.logger.info("[bold blue]Auto-generating plugins-list.yaml[/bold blue]")
+        self.logger.info(f"[bold blue]Auto-generating {self.PLUGIN_LIST_FILE}[/bold blue]")
         
         if not os.path.exists(repo_path):
             raise PluginFactoryError(f"Source code repository does not exist at {repo_path}")
@@ -279,15 +281,17 @@ class PluginFactoryConfig:
             raise PluginFactoryError(f"Plugin workspace does not exist at {workspace_full_path}")
         
         try:
-            # TODO: Implement PluginListConfig.create_default function
             plugin_cfg = PluginListConfig.create_default(workspace_path=Path(workspace_full_path))
             plugin_cfg.to_file(Path(plugins_file))
             
             plugins = plugin_cfg.get_plugins()
             if plugins:
-                self.logger.info(f"Generated plugins-list.yaml with {len(plugins)} plugins")
+                self.logger.info(f"Generated {self.PLUGIN_LIST_FILE} with {len(plugins)} plugin(s)")
                 for plugin_path, build_args in plugins.items():
-                    self.logger.info(f"  - {plugin_path}: {build_args}")
+                    if build_args:
+                        self.logger.info(f"  - {plugin_path}: {build_args}")
+                    else:
+                        self.logger.info(f"  - {plugin_path}")
             else:
                 self.logger.warning("No plugins found in workspace")
         except PluginFactoryError:
@@ -318,7 +322,7 @@ class PluginFactoryConfig:
             self.logger.debug(f"Using source config from CLI: {source_config}")
             return source_config
         
-        source_file = os.path.join(self.config_dir, "source.json")
+        source_file = os.path.join(self.config_dir, self.SOURCE_CONFIG_FILE)
 
         if os.path.exists(source_file) and not self.use_local:
             # SourceConfig.from_file() raises ConfigurationError on failure, so let it propagate to cli.py
@@ -353,7 +357,7 @@ class PluginFactoryConfig:
             self.logger.info(f"  Repository: {source_config.repo}")
             self.logger.info(f"  Reference: {source_config.repo_ref}")
         
-        plugins_list_file = os.path.join(self.config_dir, "plugins-list.yaml")
+        plugins_list_file = os.path.join(self.config_dir, self.PLUGIN_LIST_FILE)
         
         if os.path.exists(plugins_list_file):
             self.logger.info(f"Using plugin list file: {plugins_list_file}")
@@ -455,7 +459,7 @@ class PluginFactoryConfig:
                 step=STEP_NAME
             )
         
-        plugins_list_file = os.path.join(config_dir, "plugins-list.yaml")
+        plugins_list_file = os.path.join(config_dir, self.PLUGIN_LIST_FILE)
         
         if not os.path.exists(plugins_list_file):
             raise ConfigurationError("No plugins file found")
@@ -640,7 +644,7 @@ class SourceConfig:
             
             raise ConfigurationError(
                 f"Could not resolve the default branch for '{repo}'. "
-                "Please specify a branch or ref explicitly via 'repo-ref' in source.json "
+                f"Please specify a branch or ref explicitly via 'repo-ref' in {PluginFactoryConfig.SOURCE_CONFIG_FILE} "
                 "or the --source-ref CLI argument."
             )
         except subprocess.CalledProcessError as e:
@@ -758,9 +762,9 @@ def discover_workspaces(config_dir: Path) -> list["WorkspaceInfo"]:
         if not entry.is_dir():
             continue
         
-        source_file = entry / "source.json"
+        source_file = entry / PluginFactoryConfig.SOURCE_CONFIG_FILE
         if not source_file.exists():
-            logger.debug(f"Skipping {entry.name}/ — no source.json")
+            logger.debug(f"Skipping {entry.name}/ — no {PluginFactoryConfig.SOURCE_CONFIG_FILE}")
             continue
         
         workspace_name = entry.name
@@ -824,7 +828,7 @@ def clone_workspaces_with_worktrees(
         if returncode != 0:
             raise ExecutionError(
                 f"Failed to clone repository '{repo_url}' (exit code {returncode}). "
-                f"Please verify the 'repo' URL in the source.json for workspaces using this repository. "
+                f"Please verify the 'repo' URL in the {PluginFactoryConfig.SOURCE_CONFIG_FILE} for workspaces using this repository. "
                 f"Ensure the URL is correct and accessible from your environment.",
                 step="git clone (bare)",
                 returncode=returncode,
@@ -853,7 +857,7 @@ def clone_workspaces_with_worktrees(
             if returncode != 0:
                 raise ExecutionError(
                     f"Failed to create worktree for workspace '{ws.name}' at ref '{ref}' (exit code {returncode}). "
-                    f"Please verify the 'repo-ref' value in {ws.config_dir / 'source.json'}. "
+                    f"Please verify the 'repo-ref' value in {ws.config_dir / PluginFactoryConfig.SOURCE_CONFIG_FILE}. "
                     f"Ensure the branch, tag, or commit exists in the repository.",
                     step="git worktree add",
                     returncode=returncode,
@@ -864,7 +868,22 @@ def clone_workspaces_with_worktrees(
 
 class PluginListConfig:
     """Configuration for plugin list (YAML format)."""
-    
+    VALID_BACKSTAGE_PLUGIN_ROLES: ClassVar[set[str]] = {
+        "frontend-plugin",
+        "backend-plugin",
+        "frontend-plugin-module",
+        "backend-plugin-module",
+    }
+
+    SKIP_DIRS: ClassVar[set[str]] = {
+        "node_modules",
+        "dist",
+        "dist-dynamic",
+        ".git",
+    }
+
+    logger: ClassVar[Logger] = get_logger("plugin_list")
+
     def __init__(self, plugins: Dict[str, str]):
         """
         Initialize plugin list configuration.
@@ -891,9 +910,20 @@ class PluginListConfig:
         return cls(plugins)
     
     def to_file(self, plugin_list_file: Path) -> None:
-        """Save plugin list to YAML file."""
-        # TODO: Implement this function
-        raise NotImplementedError("TODO: Saving plugin list to file is not supported yet")
+        """Save plugin list to YAML file.
+
+        Writes manually rather than via yaml.dump so that entries with no
+        build args appear as ``key:`` (YAML null) instead of ``key: ''``.
+
+        Args:
+            plugin_list_file: Destination path for the YAML file.
+        """
+        with open(plugin_list_file, 'w') as f:
+            for path, args in self.plugins.items():
+                if args:
+                    f.write(f"{path}: {args}\n")
+                else:
+                    f.write(f"{path}:\n")
     
     def get_plugins(self) -> Dict[str, str]:
         return self.plugins.copy()
@@ -903,10 +933,64 @@ class PluginListConfig:
     
     def remove_plugin(self, plugin_path: str) -> None:
         self.plugins.pop(plugin_path, None)
-    
+
     @classmethod
     def create_default(cls, workspace_path: Path) -> "PluginListConfig":
-        """Create a default plugin list by scanning workspace."""
-        # TODO: Implement this function
-        raise NotImplementedError("TODO: default plugin list creation is not supported yet")
+        """Create a default plugin list by scanning workspace for Backstage plugins.
+
+        Recursively walks ``workspace_path`` to find ``package.json`` files whose
+        ``backstage.role`` field matches one of :pyattr:`VALID_BACKSTAGE_ROLES`,
+        and returns a :class:`PluginListConfig` keyed by plugin directory paths relative to ``workspace_path``.
+
+        Args:
+            workspace_path: Absolute path to the workspace root.
+
+        Returns:
+            A :class:`PluginListConfig` with discovered plugins (no build args).
+        """
+        plugins: Dict[str, str] = {}
+
+        for pkg_json_path in cls._find_package_jsons(workspace_path):
+            role = cls._read_backstage_role(pkg_json_path)
+            if role and role in cls.VALID_BACKSTAGE_PLUGIN_ROLES:
+                plugin_path = pkg_json_path.parent.relative_to(workspace_path).as_posix()
+                plugins[plugin_path] = ""
+
+        sorted_plugins = dict(sorted(plugins.items()))
+        cls.logger.debug(f"Discovered {len(sorted_plugins)} plugin(s) in {workspace_path}")
+        return cls(sorted_plugins)
+
+    @classmethod
+    def _find_package_jsons(cls, root: Path) -> list[Path]:
+        """Recursively find package.json files, skipping non-plugin directories."""
+        results: list[Path] = []
+
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir():
+                continue
+            if entry.name in cls.SKIP_DIRS or entry.name.startswith("."):
+                continue
+
+            pkg_json = entry / "package.json"
+            if pkg_json.is_file():
+                results.append(pkg_json)
+
+            results.extend(cls._find_package_jsons(entry))
+
+        return results
+
+    @classmethod
+    def _read_backstage_role(cls, pkg_json_path: Path) -> Optional[str]:
+        """Read the ``backstage.role`` field from a package.json file.
+
+        Returns:
+            The role string, or *None* if the file cannot be parsed or has no role.
+        """
+        try:
+            data = json.loads(pkg_json_path.read_text(encoding="utf-8"))
+            cls.logger.debug(f"Read backstage role from {pkg_json_path}: {data.get('backstage', {}).get('role')}")
+            return data.get("backstage", {}).get("role")
+        except (json.JSONDecodeError, OSError) as e:
+            cls.logger.warning(f"Failed to read {pkg_json_path}: {e}")
+            return None
 

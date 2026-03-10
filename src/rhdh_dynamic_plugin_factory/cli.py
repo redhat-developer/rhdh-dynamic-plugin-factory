@@ -174,12 +174,6 @@ def _process_workspace(
         workspace_path: Relative path from repo_path to the workspace.
         output_dir: Output directory for build artifacts.
     """
-    config.auto_generate_plugins_list(
-        config_dir=workspace_config_dir,
-        repo_path=repo_path,
-        workspace_path=workspace_path,
-    )
-
     logger.info("[bold blue]Applying Patches and Overlays[/bold blue]")
     config.apply_patches_and_overlays(
         config_dir=workspace_config_dir,
@@ -190,6 +184,12 @@ def _process_workspace(
     logger.info("[bold blue]Installing Dependencies[/bold blue]")
     full_workspace_path = Path(repo_path).joinpath(workspace_path).absolute()
     install_dependencies(full_workspace_path)
+
+    config.auto_generate_plugins_list(
+        config_dir=workspace_config_dir,
+        repo_path=repo_path,
+        workspace_path=workspace_path,
+    )
 
     logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
     config.export_plugins(
@@ -285,7 +285,7 @@ def _run_multi_workspace(args: argparse.Namespace, workspaces: list[WorkspaceInf
     logger.info("[bold blue]Workspaces to be processed:[/bold blue]")
     for ws in workspaces:
         logger.info(f"  - {ws.name}: {ws.source_config.repo} @ {ws.source_config.repo_ref}")
-        # Resolve per-workspace source and output paths
+        # Resolve per-workspace source and output paths to avoid conflicts between workspaces
         ws.resolve_paths(base_repo_path, base_output_dir)
     
     # Load global config (uses root .env for global settings like registry credentials)
