@@ -251,16 +251,24 @@ class PluginFactoryConfig:
     
     def auto_generate_plugins_list(self, config_dir: Optional[str] = None,
                                     repo_path: Optional[str] = None,
-                                    workspace_path: Optional[str] = None) -> None:
-        """Auto-generate plugins-list.yaml if it doesn't already exist.
+                                    workspace_path: Optional[str] = None,
+                                    generate_build_args: bool = False) -> None:
+        """Auto-generate plugins-list.yaml, or populate build args for an existing one.
+
+        When the file does not exist, a full scan is performed (all plugins
+        in the workspace are discovered).
+
+        When the file already exists and ``generate_build_args``*`` is ``True``,
+        build arguments are (re)computed for every plugin listed in the file.
 
         Args:
             config_dir: Config directory containing plugins-list.yaml. Defaults to self.config_dir.
             repo_path: Repository path. Defaults to self.repo_path.
             workspace_path: Workspace path relative to repo. Defaults to self.workspace_path.
+            generate_build_args: If True, recompute build args for an existing plugins-list.yaml.
 
         Raises:
-            PluginFactoryError: If auto-generation fails.
+            PluginFactoryError: If auto-generation or build-arg population fails.
         """
         config_dir = config_dir or self.config_dir
         repo_path = repo_path or self.repo_path
@@ -269,7 +277,10 @@ class PluginFactoryConfig:
         plugins_file = os.path.join(config_dir, self.PLUGIN_LIST_FILE)
         
         if os.path.exists(plugins_file):
-            self.logger.debug(f"[green]{self.PLUGIN_LIST_FILE} already exists at {plugins_file}. Skipping auto-generation.[/green]")
+            if generate_build_args:
+                self._populate_build_args_for_existing(plugins_file, repo_path, workspace_path)
+            else:
+                self.logger.debug(f"[green]{self.PLUGIN_LIST_FILE} already exists at {plugins_file}. Skipping auto-generation.[/green]")
             return
         
         self.logger.info(f"[bold blue]Auto-generating {self.PLUGIN_LIST_FILE}[/bold blue]")
@@ -299,6 +310,39 @@ class PluginFactoryConfig:
             raise
         except Exception as e:
             raise PluginFactoryError(f"Failed to auto-generate plugins list: {e}") from e
+
+    def _populate_build_args_for_existing(
+        self, plugins_file: str, repo_path: str, workspace_path: str,
+    ) -> None:
+        """Load an existing plugins-list.yaml, recompute build args, and write it back.
+
+        Args:
+            plugins_file: Absolute path to the plugins-list.yaml file.
+            repo_path: Repository root path.
+            workspace_path: Workspace path relative to repo_path.
+
+        Raises:
+            PluginFactoryError: If the workspace cannot be found or population fails.
+        """
+        self.logger.warning(
+            f"[yellow]--generate-build-args: Modifying existing {self.PLUGIN_LIST_FILE} "
+            f"to (re)compute build arguments. Your file will be overwritten.[/yellow]"
+        )
+
+        workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
+        if not os.path.exists(workspace_full_path):
+            raise PluginFactoryError(f"Plugin workspace does not exist at {workspace_full_path}")
+
+        try:
+            plugin_cfg = PluginListConfig.from_file(Path(plugins_file))
+            plugin_cfg.populate_build_args(Path(workspace_full_path))
+            plugin_cfg.to_file(Path(plugins_file))
+        except PluginFactoryError:
+            raise
+        except Exception as e:
+            raise PluginFactoryError(
+                f"Failed to populate build args for {self.PLUGIN_LIST_FILE}: {e}"
+            ) from e
     
     def discover_source_config(self) -> Optional["SourceConfig"]:
         """Discovers and loads source configuration.
@@ -955,6 +999,113 @@ class PluginListConfig:
     def remove_plugin(self, plugin_path: str) -> None:
         self.plugins.pop(plugin_path, None)
 
+    def populate_build_args(self, workspace_path: Path) -> "PluginListConfig":
+        """(Re)compute build arguments for every plugin in the list.
+
+        Uses the same dependency analysis as :meth:`create_default` but only
+        for the plugins already present in ``self.plugins``.  All existing
+        build args are overwritten with freshly computed values.
+
+        A before/after diff is logged for each plugin whose args changed so
+        the user has a record to revert from if needed.
+
+        Args:
+            workspace_path: Absolute path to the workspace root
+                (must already have ``node_modules`` installed).
+
+        Returns:
+            ``self``, mutated in place.
+        """
+        original = self.plugins.copy()
+        host_packages = self._parse_host_backstage_packages(self.HOST_LOCKFILE)
+
+        for plugin_dir in self.plugins:
+            pkg_json_path = workspace_path / plugin_dir / self._PKG_JSON
+            if not pkg_json_path.is_file():
+                self.logger.warning(
+                    f"Plugin package.json not found in workspace: {plugin_dir} "
+                    f"(expected at {pkg_json_path})"
+                )
+                self.plugins[plugin_dir] = ""
+                continue
+
+            role = self._read_backstage_role(pkg_json_path)
+            if not role or role not in self.VALID_BACKSTAGE_PLUGIN_ROLES:
+                self.logger.warning(
+                    f"Plugin {plugin_dir} has no valid backstage.role — skipping build-arg computation. "
+                    f"Found role: {role}. Valid roles are: {', '.join(self.VALID_BACKSTAGE_PLUGIN_ROLES)}"
+                )
+                self.plugins[plugin_dir] = ""
+                continue
+
+            self.plugins[plugin_dir] = self._compute_plugin_build_args(
+                workspace_path, plugin_dir, pkg_json_path, host_packages,
+            )
+
+        self._log_build_args_diff(original, self.plugins)
+        return self
+
+    @classmethod
+    def _log_build_args_diff(
+        cls, before: Dict[str, str], after: Dict[str, str],
+    ) -> None:
+        """Log a before/after comparison for plugins whose build args changed."""
+        changed: list[str] = []
+        unchanged: list[str] = []
+
+        for plugin_dir in after:
+            old = before.get(plugin_dir, "")
+            new = after[plugin_dir]
+            if old != new:
+                changed.append(plugin_dir)
+            else:
+                unchanged.append(plugin_dir)
+
+        if changed:
+            cls.logger.info(
+                f"Build args updated for {len(changed)} of "
+                f"{len(after)} plugin(s):"
+            )
+            for plugin_dir in changed:
+                old = before.get(plugin_dir, "")
+                new = after[plugin_dir]
+                cls.logger.info(f"  {plugin_dir}:")
+                cls.logger.info(f"    before: {old or '(empty)'}")
+                cls.logger.info(f"    after:  {new or '(empty)'}")
+
+        if unchanged:
+            cls.logger.info(
+                f"Build args unchanged for {len(unchanged)} plugin(s):"
+            )
+            for plugin_dir in unchanged:
+                cls.logger.info(
+                    f"  {plugin_dir}: {after[plugin_dir] or '(empty)'}"
+                )
+
+    @classmethod
+    def _compute_plugin_build_args(
+        cls,
+        workspace_path: Path,
+        plugin_dir: str,
+        pkg_json_path: Path,
+        host_packages: set[str],
+    ) -> str:
+        """Compute build args for a single plugin based on its backstage role.
+
+        Returns the CLI argument string for backend plugins, or empty
+        string for frontend plugins.  Returns empty string if the role
+        is not a valid plugin role.
+        """
+        role = cls._read_backstage_role(pkg_json_path)
+        if not role or role not in cls.VALID_BACKSTAGE_PLUGIN_ROLES:
+            return ""
+
+        if role in cls.BACKEND_ROLES:
+            return cls._compute_backend_build_args(
+                workspace_path, plugin_dir, pkg_json_path, host_packages,
+            )
+        return ""
+
     @classmethod
     def create_default(cls, workspace_path: Path) -> "PluginListConfig":
         """Create a default plugin list by scanning workspace for Backstage plugins.
@@ -979,14 +1130,9 @@ class PluginListConfig:
             role = cls._read_backstage_role(pkg_json_path)
             if role and role in cls.VALID_BACKSTAGE_PLUGIN_ROLES:
                 plugin_dir = pkg_json_path.parent.relative_to(workspace_path).as_posix()
-
-                if role in cls.BACKEND_ROLES:
-                    build_args = cls._compute_backend_build_args(
-                        workspace_path, plugin_dir, pkg_json_path, host_packages,
-                    )
-                    plugins[plugin_dir] = build_args
-                else:
-                    plugins[plugin_dir] = ""
+                plugins[plugin_dir] = cls._compute_plugin_build_args(
+                    workspace_path, plugin_dir, pkg_json_path, host_packages,
+                )
 
         sorted_plugins = dict[str, str](sorted(plugins.items()))
         cls.logger.debug(f"Discovered {len(sorted_plugins)} plugin(s) in {workspace_path}")

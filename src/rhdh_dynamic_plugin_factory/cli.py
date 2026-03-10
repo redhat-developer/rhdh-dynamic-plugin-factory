@@ -126,6 +126,14 @@ Examples:
         default=False,
         help="Clean the source directory before cloning source repository. WARNING: This will all the contents of the source directory."
     )
+    parser.add_argument(
+        "--generate-build-args",
+        action="store_true",
+        default=False,
+        help="When plugins-list.yaml exists, (re)compute build arguments for all "
+             "listed plugins using dependency analysis. WARNING: This overwrites "
+             "your plugins-list.yaml with updated build args."
+    )
     return parser
 
 def install_dependencies(workspace_path: Path) -> None:
@@ -181,6 +189,7 @@ def _process_workspace(
     repo_path: str,
     workspace_path: str,
     output_dir: str,
+    generate_build_args: bool = False,
 ) -> None:
     """Execute the plugin factory pipeline for a single workspace.
     
@@ -190,6 +199,7 @@ def _process_workspace(
         repo_path: Path to the repository checkout for this workspace.
         workspace_path: Relative path from repo_path to the workspace.
         output_dir: Output directory for build artifacts.
+        generate_build_args: If True, (re)compute build args for an existing plugins-list.yaml.
     """
     logger.info("[bold blue]Applying Patches and Overlays[/bold blue]")
     config.apply_patches_and_overlays(
@@ -206,6 +216,7 @@ def _process_workspace(
         config_dir=workspace_config_dir,
         repo_path=repo_path,
         workspace_path=workspace_path,
+        generate_build_args=generate_build_args,
     )
 
     logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
@@ -350,6 +361,7 @@ def _run_multi_workspace(args: argparse.Namespace, workspaces: list[WorkspaceInf
                 repo_path=str(ws.repo_path),
                 workspace_path=ws.source_config.workspace_path,
                 output_dir=str(ws.output_dir),
+                generate_build_args=args.generate_build_args,
             )
             successes.append(ws.name)
             logger.info(f"[green]Workspace '{ws.name}' export completed successfully[/green]")
@@ -419,6 +431,7 @@ def _run_single_workspace(args: argparse.Namespace) -> None:
         repo_path=str(config.repo_path),
         workspace_path=str(config.workspace_path),
         output_dir=str(args.output_dir),
+        generate_build_args=args.generate_build_args,
     )
 
 
