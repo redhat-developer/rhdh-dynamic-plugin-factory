@@ -679,6 +679,207 @@ class TestComputeBackendBuildArgs:
         assert result == ""
 
 
+class TestGatherBackstageDeps:
+    """Tests for PluginListConfig._gather_backstage_deps."""
+
+    def test_direct_backstage_dep(self, tmp_path):
+        """A dep that directly depends on @backstage/* finds it."""
+        _make_node_module(
+            tmp_path, "some-lib",
+            dependencies={"@backstage/catalog-model": "^1.7.0"},
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "some-lib")
+        assert result == {"@backstage/catalog-model"}
+
+    def test_deep_transitive_backstage_dep(self, tmp_path):
+        """@backstage/* found two levels deep is still detected."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={"@backstage/catalog-model": "^1.7.0"},
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == {"@backstage/catalog-model"}
+
+    def test_three_levels_deep(self, tmp_path):
+        """@backstage/* found three levels deep is detected."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={"dep-c": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-c",
+            dependencies={"@backstage/errors": "^1.2.0"},
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == {"@backstage/errors"}
+
+    def test_multiple_backstage_at_different_depths(self, tmp_path):
+        """@backstage/* packages at multiple depths are all collected."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={
+                "@backstage/catalog-model": "^1.7.0",
+                "dep-b": "^1.0.0",
+            },
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={"@backstage/errors": "^1.2.0"},
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == {"@backstage/catalog-model", "@backstage/errors"}
+
+    def test_no_backstage_deps(self, tmp_path):
+        """Dep tree with no @backstage/* returns empty set."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(tmp_path, "dep-b")
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == set()
+
+    def test_does_not_recurse_into_backstage(self, tmp_path):
+        """Walk stops at @backstage/* nodes -- does not read their deps."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"@backstage/catalog-model": "^1.7.0"},
+        )
+        _make_node_module(
+            tmp_path, "@backstage/catalog-model",
+            dependencies={"@backstage/errors": "^1.2.0"},
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == {"@backstage/catalog-model"}
+        assert "@backstage/errors" not in result
+
+    def test_cycle_avoidance(self, tmp_path):
+        """Circular deps don't cause infinite recursion."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={
+                "dep-a": "^1.0.0",
+                "@backstage/config": "^1.0.0",
+            },
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == {"@backstage/config"}
+
+    def test_unresolvable_dep_skipped(self, tmp_path):
+        """Missing packages in node_modules are silently skipped."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"nonexistent": "^1.0.0"},
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == set()
+
+    def test_optional_dep_with_backstage(self, tmp_path):
+        """@backstage/* found via optionalDependencies is detected."""
+        _make_node_module(
+            tmp_path, "dep-a",
+            optional_dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={"@backstage/types": "^1.0.0"},
+        )
+
+        result = PluginListConfig._gather_backstage_deps(tmp_path, "dep-a")
+        assert result == {"@backstage/types"}
+
+
+class TestComputeBackendBuildArgsDeepTransitive:
+    """Tests for deep transitive @backstage/* detection in build args."""
+
+    def test_deep_transitive_triggers_embed(self, tmp_path):
+        """dep-a -> dep-b -> @backstage/catalog-model triggers embed for dep-a."""
+        _make_plugin_dir(
+            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            dependencies={"dep-a": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={"@backstage/catalog-model": "^1.7.0"},
+        )
+
+        host = {"@backstage/catalog-model"}
+        result = PluginListConfig._compute_backend_build_args(
+            tmp_path, "plugins/backend",
+            tmp_path / "plugins/backend/package.json", host,
+        )
+        assert "--embed-package dep-a" in result
+        assert "--shared-package" not in result
+
+    def test_deep_transitive_missing_from_host(self, tmp_path):
+        """Deep @backstage/* dep not in host triggers both embed and unshare."""
+        _make_plugin_dir(
+            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            dependencies={"dep-a": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={"@backstage/new-experimental": "^0.1.0"},
+        )
+
+        result = PluginListConfig._compute_backend_build_args(
+            tmp_path, "plugins/backend",
+            tmp_path / "plugins/backend/package.json", set(),
+        )
+        assert "--embed-package dep-a" in result
+        assert "--shared-package !@backstage/new-experimental" in result
+
+    def test_no_deep_backstage_no_embed(self, tmp_path):
+        """Deep deps without @backstage/* produce no embed args."""
+        _make_plugin_dir(
+            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            dependencies={"dep-a": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-a",
+            dependencies={"dep-b": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "dep-b",
+            dependencies={"lodash": "^4.0.0"},
+        )
+        _make_node_module(tmp_path, "lodash")
+
+        result = PluginListConfig._compute_backend_build_args(
+            tmp_path, "plugins/backend",
+            tmp_path / "plugins/backend/package.json", set(),
+        )
+        assert result == ""
+
+
 class TestCreateDefaultWithEmbedArgs:
     """End-to-end tests for create_default with Phase 2 embed/unshare detection."""
 

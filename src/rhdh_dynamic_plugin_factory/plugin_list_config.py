@@ -383,41 +383,49 @@ class PluginListConfig:
         return native
 
     @classmethod
-    def _check_third_party_dep(
+    def _gather_backstage_deps(
         cls,
         workspace_path: Path,
         dep_name: str,
-        host_packages: set[str],
-        embed_packages: set[str],
-        unshare_packages: set[str],
-    ) -> None:
-        """Check a non-``@backstage/*`` dep for transitive shared-package usage.
+    ) -> set[str]:
+        """Find ``@backstage/*`` packages in the transitive dependency tree.
 
-        If the dependency has any ``@backstage/*`` dependencies it is
-        marked for embedding.  Dependencies absent from *host_packages* are
-        additionally marked for unsharing.
+        Recursively walks *dep_name*'s ``dependencies`` and
+        ``optionalDependencies`` via ``node_modules``.  ``@backstage/*``
+        packages are collected but not recursed into.  Tracks visited
+        packages to avoid cycles.
 
-        Results are collected directly into *embed_packages* / *unshare_packages*.
+        Returns:
+            Set of ``@backstage/*`` package names found.
         """
-        dep_pkg_json = cls._resolve_node_module_package_json(workspace_path, dep_name)
-        if dep_pkg_json is None:
-            cls.logger.debug(f"Could not resolve {dep_name} in node_modules")
-            return
+        found: set[str] = set()
+        visited: set[str] = set()
 
-        try:
-            dep_data = json.loads(dep_pkg_json.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            cls.logger.debug(f"Failed to read {dep_pkg_json}: {e}")
-            return
+        def _walk(pkg_name: str) -> None:
+            if pkg_name in visited:
+                return
+            visited.add(pkg_name)
 
-        dep_deps = dep_data.get("dependencies", {})
-        backstage_deps = [d for d in dep_deps if d.startswith("@backstage/")]
+            if pkg_name.startswith("@backstage/"):
+                found.add(pkg_name)
+                return
 
-        if backstage_deps:
-            embed_packages.add(dep_name)
-            for dep in backstage_deps:
-                if dep not in host_packages:
-                    unshare_packages.add(dep)
+            pkg_json = cls._resolve_node_module_package_json(workspace_path, pkg_name)
+            if pkg_json is None:
+                return
+
+            try:
+                data = json.loads(pkg_json.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                cls.logger.warning(f"Failed to read {pkg_json}: {e}")
+                return
+
+            for field in ("dependencies", "optionalDependencies"):
+                for sub_dep in data.get(field, {}):
+                    _walk(sub_dep)
+
+        _walk(dep_name)
+        return found
 
     @classmethod
     def _compute_backend_build_args(
@@ -472,10 +480,12 @@ class PluginListConfig:
                 continue
 
             private_deps.add(dep_name)
-            cls._check_third_party_dep(
-                workspace_path, dep_name,
-                host_packages, embed_packages, unshare_packages,
-            )
+            backstage_deps = cls._gather_backstage_deps(workspace_path, dep_name)
+            if backstage_deps:
+                embed_packages.add(dep_name)
+                unshare_packages.update(
+                    bs for bs in backstage_deps if bs not in host_packages
+                )
 
         suppress_native = cls._gather_native_modules(
             workspace_path, private_deps | embed_packages | siblings,
