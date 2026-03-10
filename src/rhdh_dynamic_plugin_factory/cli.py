@@ -12,7 +12,8 @@ from pathlib import Path
 try:
     from .__version__ import __version__
     from .logger import setup_logging, get_logger
-    from .config import PluginFactoryConfig, WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
+    from .config import PluginFactoryConfig
+    from .source_config import WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
     from .utils import run_command_with_streaming, prompt_or_clean_directory
     from .exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 except ImportError:
@@ -20,7 +21,8 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from rhdh_dynamic_plugin_factory.__version__ import __version__
     from rhdh_dynamic_plugin_factory.logger import setup_logging, get_logger
-    from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig, WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
+    from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+    from rhdh_dynamic_plugin_factory.source_config import WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
     from rhdh_dynamic_plugin_factory.utils import run_command_with_streaming, prompt_or_clean_directory
     from rhdh_dynamic_plugin_factory.exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 

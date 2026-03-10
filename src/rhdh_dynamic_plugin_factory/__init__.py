@@ -8,14 +8,14 @@ automated build orchestration for Backstage plugins.
 
 from .__version__ import __version__
 from .cli import main, create_parser
-from .config import (
-    PluginFactoryConfig,
+from .config import PluginFactoryConfig
+from .source_config import (
     SourceConfig,
     WorkspaceInfo,
-    PluginListConfig,
     discover_workspaces,
     clone_workspaces_with_worktrees,
 )
+from .plugin_list_config import PluginListConfig
 from .exceptions import (
     PluginFactoryError,
     ConfigurationError,
