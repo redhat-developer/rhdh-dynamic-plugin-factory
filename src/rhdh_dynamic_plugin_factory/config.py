@@ -6,6 +6,7 @@ import argparse
 from logging import Logger
 import os
 from pathlib import Path
+import re
 from typing import Dict, Optional, ClassVar
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
@@ -284,7 +285,7 @@ class PluginFactoryConfig:
             plugin_cfg = PluginListConfig.create_default(workspace_path=Path(workspace_full_path))
             plugin_cfg.to_file(Path(plugins_file))
             
-            plugins = plugin_cfg.get_plugins()
+            plugins: Dict[str, str] = plugin_cfg.get_plugins()
             if plugins:
                 self.logger.info(f"Generated {self.PLUGIN_LIST_FILE} with {len(plugins)} plugin(s)")
                 for plugin_path, build_args in plugins.items():
@@ -351,7 +352,7 @@ class PluginFactoryConfig:
             load_dotenv(env_file, override=True)
             self.logger.debug(f"Loaded .env file: {env_file}")
         
-        source_config = self.discover_source_config()
+        source_config: Optional["SourceConfig"] = self.discover_source_config()
         if source_config:
             self.logger.info("Found source configuration")
             self.logger.info(f"  Repository: {source_config.repo}")
@@ -467,12 +468,12 @@ class PluginFactoryConfig:
         config_env_file = os.path.join(config_dir, ".env")
         default_env_file = Path(__file__).parent.parent.parent / "default.env"
         load_dotenv(default_env_file)
-        env = dict(os.environ)
+        env = dict[str, str](os.environ)
         
         if os.path.exists(config_env_file):
             self.logger.debug(f"Loading script configuration from: {config_env_file}")
             load_dotenv(config_env_file, override=True)
-            env = dict(os.environ)
+            env = dict[str, str](os.environ)
         
         os.makedirs(output_dir, exist_ok=True)
         env["INPUTS_DESTINATION"] = output_dir
@@ -814,8 +815,8 @@ def clone_workspaces_with_worktrees(
     
     for repo_url, group in groupby(workspaces, key=lambda w: w.source_config.repo):
         workspace_list = list(group)
-        repo_name = repo_dir_name(repo_url)
-        clone_path = clones_dir / repo_name
+        repo_name: str = repo_dir_name(repo_url)
+        clone_path: Path = clones_dir / repo_name
         
         logger.info(f"[bold blue]\nCloning base repository: {repo_url}[/bold blue]")
         logger.info(f"  Destination: {clone_path}")
@@ -875,12 +876,32 @@ class PluginListConfig:
         "backend-plugin-module",
     }
 
+    BACKEND_ROLES: ClassVar[set[str]] = {
+        "backend-plugin",
+        "backend-plugin-module",
+    }
+
     SKIP_DIRS: ClassVar[set[str]] = {
         "node_modules",
         "dist",
         "dist-dynamic",
         ".git",
+        "__fixtures__",
     }
+
+    _PKG_JSON: ClassVar[str] = "package.json"
+
+    HOST_LOCKFILE: ClassVar[Path] = (
+        Path(__file__).parent.parent.parent / "resources" / "rhdh" / "yarn.lock"
+    )
+
+    _LOCKFILE_BACKSTAGE_RE: ClassVar[re.Pattern] = re.compile(
+        r'"(@backstage/[\w.-]+)@npm:'
+    )
+
+    _NATIVE_DEP_MARKERS: ClassVar[frozenset[str]] = frozenset[str]({
+        "bindings", "prebuild", "nan", "node-pre-gyp", "node-gyp-build",
+    })
 
     logger: ClassVar[Logger] = get_logger("plugin_list")
 
@@ -938,25 +959,36 @@ class PluginListConfig:
     def create_default(cls, workspace_path: Path) -> "PluginListConfig":
         """Create a default plugin list by scanning workspace for Backstage plugins.
 
-        Recursively walks ``workspace_path`` to find ``package.json`` files whose
-        ``backstage.role`` field matches one of :pyattr:`VALID_BACKSTAGE_ROLES`,
-        and returns a :class:`PluginListConfig` keyed by plugin directory paths relative to ``workspace_path``.
+        Recursively walks *workspace_path* to find ``package.json`` files whose
+        ``backstage.role`` matches one of :pyattr:`VALID_BACKSTAGE_PLUGIN_ROLES`.
+
+        For backend plugins, dependency analysis is performed against the
+        bundled RHDH host lockfile to determine ``--embed-package`` and
+        ``--shared-package`` arguments.
 
         Args:
             workspace_path: Absolute path to the workspace root.
 
         Returns:
-            A :class:`PluginListConfig` with discovered plugins (no build args).
+            A :class:`PluginListConfig` with discovered plugins and build arg(s) (if any).
         """
         plugins: Dict[str, str] = {}
+        host_packages = cls._parse_host_backstage_packages(cls.HOST_LOCKFILE)
 
         for pkg_json_path in cls._find_package_jsons(workspace_path):
             role = cls._read_backstage_role(pkg_json_path)
             if role and role in cls.VALID_BACKSTAGE_PLUGIN_ROLES:
-                plugin_path = pkg_json_path.parent.relative_to(workspace_path).as_posix()
-                plugins[plugin_path] = ""
+                plugin_dir = pkg_json_path.parent.relative_to(workspace_path).as_posix()
 
-        sorted_plugins = dict(sorted(plugins.items()))
+                if role in cls.BACKEND_ROLES:
+                    build_args = cls._compute_backend_build_args(
+                        workspace_path, plugin_dir, pkg_json_path, host_packages,
+                    )
+                    plugins[plugin_dir] = build_args
+                else:
+                    plugins[plugin_dir] = ""
+
+        sorted_plugins = dict[str, str](sorted(plugins.items()))
         cls.logger.debug(f"Discovered {len(sorted_plugins)} plugin(s) in {workspace_path}")
         return cls(sorted_plugins)
 
@@ -971,7 +1003,7 @@ class PluginListConfig:
             if entry.name in cls.SKIP_DIRS or entry.name.startswith("."):
                 continue
 
-            pkg_json = entry / "package.json"
+            pkg_json = entry / cls._PKG_JSON
             if pkg_json.is_file():
                 results.append(pkg_json)
 
@@ -993,4 +1025,247 @@ class PluginListConfig:
         except (json.JSONDecodeError, OSError) as e:
             cls.logger.warning(f"Failed to read {pkg_json_path}: {e}")
             return None
+
+    @classmethod
+    def _parse_host_backstage_packages(cls, lockfile_path: Path) -> set[str]:
+        """Extract ``@backstage/*`` package names from a Yarn Berry lockfile (Yarn 2+).
+
+        Scans top-level key lines (e.g.
+        ``"@backstage/catalog-model@npm:^1.7.2, …":``) and collects distinct
+        package names.
+
+        Args:
+            lockfile_path: Path to the host ``yarn.lock`` file.
+
+        Returns:
+            Set of ``@backstage/*`` package names found in the lockfile,
+            or an empty set if the file does not exist.
+        """
+        if not lockfile_path.is_file():
+            cls.logger.warning(f"Host lockfile not found at {lockfile_path}")
+            return set[str]()
+
+        packages: set[str] = set[str]()
+        for line in lockfile_path.read_text(encoding="utf-8").splitlines():
+            if not line.startswith('"@backstage/'):
+                continue
+            for match in cls._LOCKFILE_BACKSTAGE_RE.finditer(line):
+                packages.add(match.group(1))
+
+        cls.logger.debug(f"Parsed {len(packages)} @backstage/* packages from host lockfile")
+        return packages
+
+    @staticmethod
+    def _get_sibling_names(plugin_name: str, role: str) -> set[str]:
+        """Derive sibling package names that the RHDH CLI auto-embeds.
+
+        Replicates the rhdh-cli logic: for backend plugins the CLI
+        automatically embeds the ``-common`` and ``-node`` siblings.
+
+        Args:
+            plugin_name: The npm package name (e.g. ``@scope/my-plugin-backend``).
+            role: The ``backstage.role`` value.
+
+        Returns:
+            Set of sibling package names, empty for non-backend roles.
+        """
+        if role == "backend-plugin":
+            base = re.sub(r"-backend$", "", plugin_name)
+        elif role == "backend-plugin-module":
+            base = re.sub(r"-backend-module-.+$", "", plugin_name)
+        else:
+            return set[str]()
+
+        if base == plugin_name:
+            return set[str]()
+
+        return {f"{base}-common", f"{base}-node"}
+
+    @classmethod
+    def _resolve_node_module_package_json(
+        cls, workspace_path: Path, dep_name: str
+    ) -> Optional[Path]:
+        """Locate a dependency's ``package.json`` in the workspace root ``node_modules``.
+
+        Yarn workspaces hoist all packages to the workspace root, so only that
+        location is checked.
+
+        Args:
+            workspace_path: Absolute path to the workspace root.
+            dep_name: npm package name (may be scoped, e.g. ``@aws/foo``).
+
+        Returns:
+            Path to the dependency's ``package.json``, or *None* if not found.
+        """
+        candidate = workspace_path / "node_modules" / dep_name / cls._PKG_JSON
+        if candidate.is_file():
+            return candidate
+        return None
+
+    @staticmethod
+    def _is_native_module(pkg_data: dict) -> bool:
+        """Check whether a ``package.json`` describes a native Node.js module.
+
+        Replicates the logic of the ``is-native-module`` npm package used by RHDH CLI.
+        """
+        deps = pkg_data.get("dependencies", {})
+        if any(marker in deps for marker in PluginListConfig._NATIVE_DEP_MARKERS):
+            return True
+        if pkg_data.get("gypfile"):
+            return True
+        if pkg_data.get("binary"):
+            return True
+        return False
+
+    @classmethod
+    def _gather_native_modules(
+        cls,
+        workspace_path: Path,
+        private_dep_names: set[str],
+    ) -> set[str]:
+        """Find native modules in the transitive dependency tree of private deps.
+
+        Recursively walks each dep's dependencies via ``node_modules``,
+        checking :meth:`_is_native_module` on every package encountered.
+        Tracks visited packages to avoid cycles.
+
+        Args:
+            workspace_path: Absolute workspace root.
+            private_dep_names: Direct dep names to start the walk from.
+
+        Returns:
+            Set of native package names found.
+        """
+        native: set[str] = set[str]()
+        visited: set[str] = set[str]()
+
+        def _walk(dep_name: str) -> None:
+            if dep_name in visited:
+                return
+            visited.add(dep_name)
+
+            pkg_json = cls._resolve_node_module_package_json(workspace_path, dep_name)
+            if pkg_json is None:
+                return
+
+            try:
+                data = json.loads(pkg_json.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return
+
+            if cls._is_native_module(data):
+                native.add(dep_name)
+
+            for field in ("dependencies", "optionalDependencies"):
+                for sub_dep in data.get(field, {}):
+                    _walk(sub_dep)
+
+        for dep in private_dep_names:
+            _walk(dep)
+
+        return native
+
+    @classmethod
+    def _check_third_party_dep(
+        cls,
+        workspace_path: Path,
+        dep_name: str,
+        host_packages: set[str],
+        embed_packages: set[str],
+        unshare_packages: set[str],
+    ) -> None:
+        """Check a non-``@backstage/*`` dep for transitive shared-package usage.
+
+        If the dependency has any ``@backstage/*`` dependencies it is
+        marked for embedding.  Dependencies absent from *host_packages* are
+        additionally marked for unsharing.
+
+        Results are collected directly into *embed_packages* / *unshare_packages*.
+        """
+        dep_pkg_json = cls._resolve_node_module_package_json(workspace_path, dep_name)
+        if dep_pkg_json is None:
+            cls.logger.debug(f"Could not resolve {dep_name} in node_modules")
+            return
+
+        try:
+            dep_data = json.loads(dep_pkg_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            cls.logger.debug(f"Failed to read {dep_pkg_json}: {e}")
+            return
+
+        dep_deps = dep_data.get("dependencies", {})
+        backstage_deps = [d for d in dep_deps if d.startswith("@backstage/")]
+
+        if backstage_deps:
+            embed_packages.add(dep_name)
+            for dep in backstage_deps:
+                if dep not in host_packages:
+                    unshare_packages.add(dep)
+
+    @classmethod
+    def _compute_backend_build_args(
+        cls,
+        workspace_path: Path,
+        plugin_dir: str,
+        pkg_json_path: Path,
+        host_packages: set[str],
+    ) -> str:
+        """Compute ``--embed-package`` / ``--shared-package`` args for a backend plugin.
+
+        Analyses the plugin's direct dependencies:
+
+        * ``@backstage/*`` deps missing from *host_packages* are unshared
+          **and** embedded (the host won't provide them at runtime).
+        * Non-``@backstage/*``, non-sibling deps whose own dependencies
+          include ``@backstage/*`` packages are embedded.  Any of those
+          sub-deps missing from *host_packages* are additionally unshared.
+
+        Args:
+            workspace_path: Absolute workspace root.
+            plugin_dir: Plugin directory relative to *workspace_path*.
+            pkg_json_path: Path to the plugin's ``package.json``.
+            host_packages: ``@backstage/*`` names present in the host lockfile.
+
+        Returns:
+            CLI argument string, or ``""`` if no extra args are needed.
+        """
+        try:
+            pkg_data = json.loads(pkg_json_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return ""
+
+        plugin_name: str = pkg_data.get("name", "")
+        role: str = pkg_data.get("backstage", {}).get("role", "")
+        dependencies: dict = pkg_data.get("dependencies", {})
+
+        siblings = cls._get_sibling_names(plugin_name, role)
+
+        embed_packages: set[str] = set[str]()
+        unshare_packages: set[str] = set[str]()
+        private_deps: set[str] = set[str]()
+
+        for dep_name in dependencies:
+            if dep_name in siblings:
+                continue
+
+            if dep_name.startswith("@backstage/"):
+                if dep_name not in host_packages:
+                    embed_packages.add(dep_name)
+                    unshare_packages.add(dep_name)
+                continue
+
+            private_deps.add(dep_name)
+            cls._check_third_party_dep(
+                workspace_path, dep_name,
+                host_packages, embed_packages, unshare_packages,
+            )
+
+        suppress_native = cls._gather_native_modules(
+            workspace_path, private_deps | embed_packages | siblings,
+        )
+
+        parts = [f"--embed-package {pkg}" for pkg in sorted(embed_packages)]
+        parts += [f"--shared-package !{pkg}" for pkg in sorted(unshare_packages)]
+        parts += [f"--suppress-native-package {pkg}" for pkg in sorted(suppress_native)]
+        return " ".join(parts)
 
