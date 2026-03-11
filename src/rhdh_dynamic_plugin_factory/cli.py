@@ -411,7 +411,7 @@ def _run_single_workspace(args: argparse.Namespace) -> None:
 
     if source_config and not config.use_local:
         logger.info("[bold blue]Repository Setup[/bold blue]")
-        source_config.clone_to_path(config.repo_path, clean=args.clean)
+        source_config.clone_to_path(Path(config.repo_path), clean=args.clean)
     elif config.use_local or not source_config:
         if config.use_local:
             logger.info("[bold blue]--use-local flag is set, using local repository[/bold blue]")

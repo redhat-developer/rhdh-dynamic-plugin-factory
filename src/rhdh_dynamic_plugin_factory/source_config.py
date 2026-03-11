@@ -172,7 +172,7 @@ class SourceConfig:
                     returncode=returncode
                 )
             
-            cmd = ["git", "checkout", self.repo_ref]
+            cmd = ["git", "checkout", str(self.repo_ref)]
             logger.info(f"[cyan]Checking out ref: {self.repo_ref}[/cyan]")
             returncode = run_command_with_streaming(
                 cmd,
