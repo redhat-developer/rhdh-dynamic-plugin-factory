@@ -19,6 +19,7 @@ class PluginListConfig:
     """Configuration for plugin list (YAML format)."""
 
     logger: ClassVar[Logger] = get_logger("plugin_list")
+    _host_packages_cache: ClassVar[set[str] | None] = None
 
     def __init__(self, plugins: Dict[str, str]):
         """
@@ -88,7 +89,7 @@ class PluginListConfig:
             ``self``, mutated in place.
         """
         original = self.plugins.copy()
-        host_packages = self._parse_host_backstage_packages(constants.HOST_LOCKFILE)
+        host_packages = self._get_host_packages()
 
         for plugin_dir in self.plugins:
             pkg_json_path = workspace_path / plugin_dir / constants.PKG_JSON
@@ -195,7 +196,7 @@ class PluginListConfig:
             A :class:`PluginListConfig` with discovered plugins and build arg(s) (if any).
         """
         plugins: Dict[str, str] = {}
-        host_packages = cls._parse_host_backstage_packages(constants.HOST_LOCKFILE)
+        host_packages = cls._get_host_packages()
 
         for pkg_json_path in cls._find_package_jsons(workspace_path):
             role = cls._read_backstage_role(pkg_json_path)
@@ -244,18 +245,27 @@ class PluginListConfig:
             return None
 
     @classmethod
-    def _parse_host_backstage_packages(cls, lockfile_path: Path) -> set[str]:
-        """Extract ``@backstage/*`` package names from a Yarn Berry lockfile (Yarn 2+).
+    def _get_host_packages(cls) -> set[str]:
+        """Return cached host packages, parsing the lockfile on first call."""
+        if cls._host_packages_cache is None:
+            cls._host_packages_cache = cls._parse_host_packages(constants.HOST_LOCKFILE)
+        return cls._host_packages_cache
+
+    @classmethod
+    def _parse_host_packages(cls, lockfile_path: Path) -> set[str]:
+        """Extract all package names from a Yarn Berry lockfile (Yarn 2+).
 
         Scans top-level key lines (e.g.
-        ``"@backstage/catalog-model@npm:^1.7.2, …":``) and collects distinct
-        package names.
+        ``"@backstage/catalog-model@npm:^1.7.2, …":`` or
+        ``"better-sqlite3@npm:^12.0.0":``) and collects distinct
+        package names.  The returned set includes ``@backstage/*``
+        packages as well as every other scoped or unscoped package.
 
         Args:
             lockfile_path: Path to the host ``yarn.lock`` file.
 
         Returns:
-            Set of ``@backstage/*`` package names found in the lockfile,
+            Set of package names found in the lockfile,
             or an empty set if the file does not exist.
         """
         if not lockfile_path.is_file():
@@ -264,9 +274,10 @@ class PluginListConfig:
 
         packages: set[str] = set[str]()
         for line in lockfile_path.read_text(encoding="utf-8").splitlines():
-            if not line.startswith('"@backstage/'):
+            # skip non-package lines
+            if not line.startswith('"'):
                 continue
-            for match in constants.LOCKFILE_BACKSTAGE_RE.finditer(line):
+            for match in constants.LOCKFILE_PACKAGE_RE.finditer(line):
                 packages.add(match.group(1))
 
         cls.logger.debug(f"Parsed {len(packages)} @backstage/* packages from host lockfile")
@@ -444,12 +455,14 @@ class PluginListConfig:
         * Non-``@backstage/*``, non-sibling deps whose own dependencies
           include ``@backstage/*`` packages are embedded.  Any of those
           sub-deps missing from *host_packages* are additionally unshared.
+        * Native modules are unconditionally suppressed (removed from the
+          bundle) since dynamic plugins do not support them.
 
         Args:
             workspace_path: Absolute workspace root.
             plugin_dir: Plugin directory relative to *workspace_path*.
             pkg_json_path: Path to the plugin's ``package.json``.
-            host_packages: ``@backstage/*`` names present in the host lockfile.
+            host_packages: All package names present in the host lockfile.
 
         Returns:
             CLI argument string, or ``""`` if no extra args are needed.

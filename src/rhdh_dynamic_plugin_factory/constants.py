@@ -37,6 +37,10 @@ LOCKFILE_BACKSTAGE_RE: re.Pattern = re.compile(
     r'"(@backstage/[\w.-]+)@npm:'
 )
 
+LOCKFILE_PACKAGE_RE: re.Pattern = re.compile(
+    r'"((?:@[\w.-]+/)?[\w.-]+)@npm:'
+)
+
 NATIVE_DEP_MARKERS: frozenset[str] = frozenset[str]({
     "bindings", "prebuild", "nan", "node-pre-gyp", "node-gyp-build",
 })
