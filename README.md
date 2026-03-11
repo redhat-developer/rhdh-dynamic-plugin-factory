@@ -22,8 +22,12 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
     - [Configuration Files](#configuration-files)
       - [1. `default.env` (Provided)](#1-defaultenv-provided)
       - [2. `config/source.json` (Required for remote repositories, unless using `--source-repo`)](#2-configsourcejson-required-for-remote-repositories-unless-using---source-repo)
-      - [3. `config/plugins-list.yaml` (Required)](#3-configplugins-listyaml-required)
+      - [3. `config/plugins-list.yaml` (Optional -- auto-generated if absent)](#3-configplugins-listyaml-optional----auto-generated-if-absent)
       - [4. `config/.env` (Optional)](#4-configenv-optional)
+    - [Plugin List Auto-Generation](#plugin-list-auto-generation)
+      - [How Auto-Generation Works](#how-auto-generation-works)
+      - [Build Argument Types](#build-argument-types)
+      - [Using `--generate-build-args`](#using---generate-build-args)
     - [Patches and Overlays](#patches-and-overlays)
       - [Patches Directory (`config/patches/`)](#patches-directory-configpatches)
       - [Overlays Directory (`config/<path-to-plugin-root-with-respect-to-workspace>/overlays/`)](#overlays-directory-configpath-to-plugin-root-with-respect-to-workspaceoverlays)
@@ -225,7 +229,7 @@ This file contains required version settings and defaults for RHDH CLI:
 
 ```bash
 # Tooling versions
-RHDH_CLI_VERSION="1.8.0"
+RHDH_CLI_VERSION="1.10.0"
 ```
 
 #### 2. `config/source.json` (Required for remote repositories, unless using `--source-repo`)
@@ -248,9 +252,9 @@ Defines the source repository to clone:
 
 > **Note:** `source.json` is not needed when using the `--source-repo` CLI argument, which provides an alternative way to specify the repository directly from the command line. See [Command-Line Options](#command-line-options) for details.
 
-#### 3. `config/plugins-list.yaml` (Required)
+#### 3. `config/plugins-list.yaml` (Optional -- auto-generated if absent)
 
-A list of plugin paths (with respect to root of workspace) to plugins to build along with optional build arguments:
+A YAML map of plugin paths (relative to the workspace root) to build, along with optional build arguments:
 
 ```yaml
 # Simple plugins (no additional arguments)
@@ -259,16 +263,11 @@ plugins/todo-backend:
 ```
 
 ```yaml
-# Plugins with embed packages
+# Plugins with build arguments
 plugins/scaffolder-backend: --embed-package @backstage/plugin-scaffolder-backend-module-github
 ```
 
-```yaml
-# Multiple embed packages
-plugins/search-backend: |
-  --embed-package @backstage/plugin-search-backend-module-catalog
-  --embed-package @backstage/plugin-search-backend-module-techdocs
-```
+If this file is not provided, the factory will auto-generate it by scanning the **entire workspace** and attempting to export **all** discovered frontend/backend plugins. See [Plugin List Auto-Generation](#plugin-list-auto-generation) for details on how discovery and build-arg computation work, and how to use `--generate-build-args` to auto-compute build arguments for only specific plugins.
 
 #### 4. `config/.env` (Optional)
 
@@ -297,6 +296,58 @@ podman run --rm -it \
 ```
 
 This approach keeps your credentials separate from the config directory and can be useful for CI/CD pipelines or when you want to reuse the same environment file across different configurations.
+
+### Plugin List Auto-Generation
+
+If no `plugins-list.yaml` file is provided for a workspace, the factory will scan the **entire** workspace, discover **all** frontend/backend plugins, compute build arguments for backend plugins and generate a `plugins-list.yaml` with the required build arguments.
+
+If you only want to take advantage of the build argument auto-generation for specific plugin(s), you can provide a barebones `plugins-list.yaml` containing your desired plugin(s) and the [`--generate-build-args` argument](#using---generate-build-args).
+
+#### How Auto-Generation Works
+
+When `plugins-list.yaml` is absent, the factory recursively scans the workspace for `package.json` files. A package is included if it has a `backstage.role` field set to one of:
+
+- `frontend-plugin`
+- `backend-plugin`
+- `frontend-plugin-module`
+- `backend-plugin-module`
+
+For **frontend** plugins (and frontend plugin modules), no build arguments are needed.
+
+For **backend** plugins (and backend plugin modules), the factory performs dependency analysis against the bundled RHDH host lockfile (`yarn.lock`) to determine which dependencies need additional build arguments during export.
+
+#### Build Argument Types
+
+The following build arguments may be automatically computed for backend plugins:
+
+| Argument                          | Purpose                                                                                                                                                                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--embed-package <pkg>`           | Bundles a dependency into the dynamic plugin. Applied to `@backstage/`* packages not provided by the RHDH host, and to non-`@backstage` packages that have transitive `@backstage/*` dependencies.                                       |
+| `--shared-package !<pkg>`         | Marks an embedded `@backstage/*` package as unshared so the plugin uses its own bundled copy instead of the host's version. (Optional Argument)                                                                                                            |
+| `--suppress-native-package <pkg>` | Suppresses native Node.js modules that cannot be bundled. Detected by the presence of markers such as `bindings`, `prebuild`, `nan`, `node-gyp-build` in the package's dependencies, or `gypfile`/`binary` fields in its `package.json`. |
+
+#### Using `--generate-build-args`
+
+For larger workspaces that contain multiple plugins, using the auto generation feature will result in many unnecessary plugins being included in the `plugins-list.yaml`. To recompute build arguments for specific plugin(s), you will need to provide a barebones `plugins-list.yaml` with your desired plugin(s), and use the `--generate-build-args` argument.
+
+```yaml
+# Barebones plugins-list.yaml -- list only the plugins you want to export
+plugins/todo:
+plugins/todo-backend:
+```
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ./config:/config:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --workspace-path workspaces/todo \
+  --generate-build-args
+```
+
+If the `--generate-build-args` argument is not provided when a `plugins-list.yaml` already exists, the factory will use it as-is and **will not** rescan or modify it.
+
+> **Warning:** `--generate-build-args` overwrites the build arguments in your existing `plugins-list.yaml`. Make a backup if you have manually tuned values you want to preserve.
 
 ### Patches and Overlays
 
@@ -339,19 +390,20 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 
 ### Command-Line Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--config-dir` | `/config` | Configuration directory containing `source.json`, `plugins-list.yaml`, patches, and overlays |
-| `--repo-path` | `/source` | Path where plugin source code will be cloned/stored |
-| `--workspace-path` | *(see below)* | Path to the workspace from repository root (e.g., `workspaces/todo`). Can also be set via `source.json`'s `workspace-path` field. |
-| `--source-repo` | `None` | Git repository URL. When provided, `source.json` is not required and the repository is cloned from this URL. |
-| `--source-ref` | `None` | Git ref (branch/tag/commit) to check out. Defaults to the repository's default branch. Requires `--source-repo`. |
-| `--output-dir` | `/outputs` | Directory for build artifacts (`.tgz` files and container images) |
-| `--push-images` / `--no-push-images` | `--no-push-images` | Whether to push container images to registry. Defaults to not pushing if no argument is provided |
-| `--use-local` | `false` | Use local repository instead of cloning from source.json |
-| `--log-level` | `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `--verbose` | `false` | Show verbose output with file and line numbers |
-| `--clean` | `false` | Automatically removes content of `--repo-path` directory when cloning from `source.json`. Ignored if `--use-local` is used. |
+| Option                               | Default            | Description                                                                                                                                                                                                                                                  |
+| ------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--config-dir`                       | `/config`          | Configuration directory containing `source.json`, `plugins-list.yaml`, patches, and overlays                                                                                                                                                                 |
+| `--repo-path`                        | `/source`          | Path where plugin source code will be cloned/stored                                                                                                                                                                                                          |
+| `--workspace-path`                   | *(see below)*      | Path to the workspace from repository root (e.g., `workspaces/todo`). Can also be set via `source.json`'s `workspace-path` field.                                                                                                                            |
+| `--source-repo`                      | `None`             | Git repository URL. When provided, `source.json` is not required and the repository is cloned from this URL.                                                                                                                                                 |
+| `--source-ref`                       | `None`             | Git ref (branch/tag/commit) to check out. Defaults to the repository's default branch. Requires `--source-repo`.                                                                                                                                             |
+| `--output-dir`                       | `/outputs`         | Directory for build artifacts (`.tgz` files and integrity hash files)                                                                                                                                                                   |
+| `--push-images` / `--no-push-images` | `--no-push-images` | Whether to push container images to registry. Defaults to not pushing if no argument is provided                                                                                                                                                             |
+| `--use-local`                        | `false`            | Use local repository instead of cloning from source.json                                                                                                                                                                                                     |
+| `--log-level`                        | `INFO`             | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`                                                                                                                                                                                               |
+| `--verbose`                          | `false`            | Show verbose output with file and line numbers                                                                                                                                                                                                               |
+| `--clean`                            | `false`            | Automatically removes content of `--repo-path` directory when cloning from `source.json`. Ignored if `--use-local` is used.                                                                                                                                  |
+| `--generate-build-args`              | `false`            | When `plugins-list.yaml` exists, recompute build arguments for all listed plugins using dependency analysis. See [Plugin List Auto-Generation](#plugin-list-auto-generation). **WARNING: This overwrites your `plugins-list.yaml` with updated build args.** |
 
 **Workspace path resolution:** In single-workspace use cases, the workspace path can be provided via the `--workspace-path` CLI argument, or the `workspace-path` field in `source.json`. The CLI argument takes highest precedence, followed by the `source.json`. For the multi-workspace case, only the `workspace-path` field in `source.json` is supported.
 
@@ -361,11 +413,11 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 
 When using the container, you can mount directories based on your needs:
 
-| Volume Mount | Required? | Purpose | When to Use |
-|--------------|-----------|---------|-------------|
-| `-v ./config:/config:z` | **Required** | Configuration files | Always - contains your `plugins-list.yaml`, `source.json`, patches, and overlays |
-| `-v ./source:/source:z` | Optional | Source code location | Only if using `--use-local` OR if you want to preserve/inspect the cloned/patched remote repository |
-| `-v ./outputs:/outputs:z` | Optional | Stores bBuild artifacts | Only if you want the output `.tgz` files saved locally (otherwise they stay in the container) |
+| Volume Mount              | Required?    | Purpose                 | When to Use                                                                                         |
+| ------------------------- | ------------ | ----------------------- | --------------------------------------------------------------------------------------------------- |
+| `-v ./config:/config:z`   | **Required** | Configuration files     | Always - contains your `plugins-list.yaml`, `source.json`, patches, and overlays                    |
+| `-v ./source:/source:z`   | Optional     | Source code location    | Only if using `--use-local` OR if you want to preserve/inspect the cloned/patched remote repository |
+| `-v ./outputs:/outputs:z` | Optional     | Stores build artifacts  | Only if you want the output `.tgz` files saved locally (otherwise they stay in the container)       |
 
 **Important**: These volume mount paths (`/config`, `/source`, `/outputs`) correspond to the default values of `--config-dir`, `--repo-path`, and `--output-dir`. If you override these arguments with custom paths, adjust your volume mounts accordingly.
 
@@ -562,12 +614,12 @@ NOTE: If the repository name (ex: plugin-name-dynamic) in the namespace specifie
 
 The `examples` directory contains ready-to-use configuration examples demonstrating different use cases and features.
 
-| Example | Description | Details |
-|---------|-------------|---------|
-| **TODO** | Basic single-workspace with custom scalprum-config | [View README](./examples/example-config-todo/README.md) |
-| **GitLab** | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/README.md) |
-| **AWS ECS** | Patches and embed packages in plugins-list.yaml | [View README](./examples/example-config-aws-ecs/README.md) |
-| **Multi-Workspace** | Multiple workspaces from different repos in a single run | [View README](./examples/example-config-multi-workspace/README.md) |
+| Example             | Description                                                   | Details                                                            |
+| ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **TODO**            | Basic single-workspace with custom scalprum-config            | [View README](./examples/example-config-todo/README.md)            |
+| **GitLab**          | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/README.md)          |
+| **AWS ECS**         | Patches and embed packages in plugins-list.yaml               | [View README](./examples/example-config-aws-ecs/README.md)         |
+| **Multi-Workspace** | Multiple workspaces from different repos in a single run      | [View README](./examples/example-config-multi-workspace/README.md) |
 
 ### Quick Example: TODO Workspace
 
