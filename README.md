@@ -56,6 +56,7 @@ A comprehensive tool for building and exporting dynamic plugins for Red Hat Deve
     - [Backend Module Not Loading (Missing Dependencies)](#backend-module-not-loading-missing-dependencies)
     - [Skopeo Fails During Plugin Installation](#skopeo-fails-during-plugin-installation)
     - [Quay.io Repository Publishing Issues](#quayio-repository-publishing-issues)
+    - [Plugin Export Fails Entry Point Validation Check](#plugin-export-fails-entry-point-validation-check)
   - [Local Development \& Contributing](#local-development--contributing)
   - [Resources](#resources)
 
@@ -318,13 +319,15 @@ For **backend** plugins (and backend plugin modules), the factory performs depen
 
 #### Build Argument Types
 
-The following build arguments may be automatically computed for backend plugins:
+The following build arguments can be automatically computed for backend plugins or manually defined:
 
 | Argument                          | Purpose                                                                                                                                                                                                                                  |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--embed-package <pkg>`           | Bundles a dependency into the dynamic plugin. Applied to `@backstage/`* packages not provided by the RHDH host, and to non-`@backstage` packages that have transitive `@backstage/*` dependencies.                                       |
-| `--shared-package !<pkg>`         | Marks an embedded `@backstage/*` package as unshared so the plugin uses its own bundled copy instead of the host's version. (Optional Argument)                                                                                                            |
+| `--shared-package !<pkg>`         | Marks an embedded `@backstage/*` package as unshared so the plugin uses its own bundled copy instead of the host's version.                                                                                                              |
+| `--shared-package <pkg>`          | Marks a dependency to be exported as a peerDependency to use the package already present in the RHDH host.                                                                                                                               |
 | `--suppress-native-package <pkg>` | Suppresses native Node.js modules that cannot be bundled. Detected by the presence of markers such as `bindings`, `prebuild`, `nan`, `node-gyp-build` in the package's dependencies, or `gypfile`/`binary` fields in its `package.json`. |
+| `--allow-native-package <pkg>`    | Experimental argument to allow bundling of specified native module.                                                                                                                                                                      |
 
 #### Using `--generate-build-args`
 
@@ -397,7 +400,7 @@ See the [TODO plugin example config](./examples/example-config-todo/README.md) a
 | `--workspace-path`                   | *(see below)*      | Path to the workspace from repository root (e.g., `workspaces/todo`). Can also be set via `source.json`'s `workspace-path` field.                                                                                                                            |
 | `--source-repo`                      | `None`             | Git repository URL. When provided, `source.json` is not required and the repository is cloned from this URL.                                                                                                                                                 |
 | `--source-ref`                       | `None`             | Git ref (branch/tag/commit) to check out. Defaults to the repository's default branch. Requires `--source-repo`.                                                                                                                                             |
-| `--output-dir`                       | `/outputs`         | Directory for build artifacts (`.tgz` files and integrity hash files)                                                                                                                                                                   |
+| `--output-dir`                       | `/outputs`         | Directory for build artifacts (`.tgz` files and integrity hash files)                                                                                                                                                                                        |
 | `--push-images` / `--no-push-images` | `--no-push-images` | Whether to push container images to registry. Defaults to not pushing if no argument is provided                                                                                                                                                             |
 | `--use-local`                        | `false`            | Use local repository instead of cloning from source.json                                                                                                                                                                                                     |
 | `--log-level`                        | `INFO`             | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`                                                                                                                                                                                               |
@@ -720,6 +723,52 @@ The factory logs may indicate successful image publication, but the image does n
 This may be due to Quay.io silently failing to publish images since your account has reached its private repository quota limit. When pushing to a non-existent repository, Quay.io automatically creates a private repository. If your account or organization has exhausted its private repository allocation, the creation may silently fails.
 
 To mitigate this, you may need to pre-create the repositories on `quay.io` before publishing to avoid having the factory attempt to create the repositories. Alternatively, you can upgrade your `quay.io` plan to increase the private repository allocation.
+
+### Plugin Export Fails Entry Point Validation Check
+
+The build argument auto-generation handles native modules as follows:
+
+In some cases a plugin may fail the entry point validation check because the RHDH CLI attempts to load the plugin and a required native module has been suppressed. If the failure is due to a native module removed via `--suppress-native-package`, you can that argument with `--shared-package` for that specific module in your `plugins-list.yaml` since the native module most likely already exists in the `rhdh` container.
+
+If the export still fails due to a dependency depending on this native module, you will need to embed it via `--embed-packages`. The error logs will indicate which dependency should be embedded.
+
+Example Error Log:
+
+```bash
+Error: Following shared package(s) should not be part of the plugin private dependencies:                                
+- better-sqlite3                                                                                                         
+        
+Either unshare them with the --shared-package !<package> option, or use the --embed-package to embed the following   packages which use shared dependencies:                                                                                  
+- @langchain/langgraph-checkpoint-sqlite  
+```
+
+If the plugin fails to startup properly after installation due to the native module not being installed in the `rhdh` container, you will need to use experimental `--allow-native-package` arg instead to package the native module with the plugin instead.
+
+Note: Be sure to re-run the factory in a clean `--repo-path` environment since this can result in `yarn install --immutable` failing due to `yarn.lock` files present from previous factory runs.
+
+Example Entry Point Validation Error:
+
+Auto-generated `plugins-list.yaml` entry that will fail:
+
+```yaml
+plugins/scaffolder-backend: --suppress-native-package isolated-vm --suppress-native-package napi-build-utils
+```
+
+```bash
+Validating plugin entry points                                                                                           
+    adding typescript extension support to enable entry point validation
+
+Error: Unable to validate plugin entry points: Error: The package "isolated-vm" has been marked as
+         a native module and removed from this dynamic plugin package                                      
+         "@backstage/plugin-scaffolder-backend-dynamic", as native modules are not currently supported by  
+         dynamic plugins
+```
+
+Fixed `plugins-list.yaml` entry:
+
+```yaml
+plugins/scaffolder-backend: --allow-native-package isolated-vm --suppress-native-package napi-build-utils
+```
 
 ## Local Development & Contributing
 
