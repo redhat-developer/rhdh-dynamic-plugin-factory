@@ -391,16 +391,16 @@ class TestPluginListConfigCreateDefault:
         assert "plugins/ecs/backend" in plugins
 
 
-class TestParseHostBackstagePackages:
-    """Tests for PluginListConfig._parse_host_backstage_packages."""
+class TestParseHostPackages:
+    """Tests for PluginListConfig._parse_host_packages."""
 
-    def test_single_entry(self, tmp_path):
+    def test_single_backstage_entry(self, tmp_path):
         lockfile = tmp_path / "yarn.lock"
         lockfile.write_text(
             '"@backstage/catalog-model@npm:^1.7.2":\n  version: 1.7.2\n'
         )
-        result = PluginListConfig._parse_host_backstage_packages(lockfile)
-        assert result == {"@backstage/catalog-model"}
+        result = PluginListConfig._parse_host_packages(lockfile)
+        assert "@backstage/catalog-model" in result
 
     def test_multi_version_entry(self, tmp_path):
         lockfile = tmp_path / "yarn.lock"
@@ -408,7 +408,7 @@ class TestParseHostBackstagePackages:
             '"@backstage/catalog-model@npm:^1.7.2, @backstage/catalog-model@npm:^1.7.3":\n'
             "  version: 1.9.0\n"
         )
-        result = PluginListConfig._parse_host_backstage_packages(lockfile)
+        result = PluginListConfig._parse_host_packages(lockfile)
         assert result == {"@backstage/catalog-model"}
 
     def test_multiple_packages(self, tmp_path):
@@ -417,24 +417,35 @@ class TestParseHostBackstagePackages:
             '"@backstage/catalog-model@npm:^1.7.2":\n  version: 1.7.2\n\n'
             '"@backstage/errors@npm:^1.2.7":\n  version: 1.2.7\n'
         )
-        result = PluginListConfig._parse_host_backstage_packages(lockfile)
-        assert result == {"@backstage/catalog-model", "@backstage/errors"}
+        result = PluginListConfig._parse_host_packages(lockfile)
+        assert {"@backstage/catalog-model", "@backstage/errors"} <= result
 
-    def test_non_backstage_entries_ignored(self, tmp_path):
+    def test_non_backstage_scoped_packages_included(self, tmp_path):
         lockfile = tmp_path / "yarn.lock"
         lockfile.write_text(
             '"@aws/sdk@npm:^1.0.0":\n  version: 1.0.0\n\n'
             '"@backstage/errors@npm:^1.2.7":\n  version: 1.2.7\n'
         )
-        result = PluginListConfig._parse_host_backstage_packages(lockfile)
-        assert result == {"@backstage/errors"}
+        result = PluginListConfig._parse_host_packages(lockfile)
+        assert result == {"@aws/sdk", "@backstage/errors"}
+
+    def test_unscoped_packages_included(self, tmp_path):
+        """Unscoped packages like better-sqlite3 are parsed."""
+        lockfile = tmp_path / "yarn.lock"
+        lockfile.write_text(
+            '"better-sqlite3@npm:^12.0.0":\n  version: 12.6.2\n\n'
+            '"cpu-features@npm:~0.0.10":\n  version: 0.0.10\n\n'
+            '"@backstage/core@npm:^1.0.0":\n  version: 1.0.0\n'
+        )
+        result = PluginListConfig._parse_host_packages(lockfile)
+        assert result == {"better-sqlite3", "cpu-features", "@backstage/core"}
 
     def test_missing_file_returns_empty(self, tmp_path):
         lockfile = tmp_path / "nonexistent.lock"
-        result = PluginListConfig._parse_host_backstage_packages(lockfile)
+        result = PluginListConfig._parse_host_packages(lockfile)
         assert result == set()
 
-    def test_backstage_in_dependency_lines_ignored(self, tmp_path):
+    def test_indented_dependency_lines_ignored(self, tmp_path):
         """Only top-level key lines (starting with quotes) are parsed, not indented dep lines."""
         lockfile = tmp_path / "yarn.lock"
         lockfile.write_text(
@@ -442,9 +453,10 @@ class TestParseHostBackstagePackages:
             '  version: 1.0.0\n'
             '  dependencies:\n'
             '    "@backstage/types": "npm:^1.2.1"\n'
+            '    better-sqlite3: "npm:^12.0.0"\n'
         )
-        result = PluginListConfig._parse_host_backstage_packages(lockfile)
-        assert result == set()
+        result = PluginListConfig._parse_host_packages(lockfile)
+        assert result == {"@some/package"}
 
 
 class TestGetSiblingNames:
@@ -1145,10 +1157,10 @@ class TestGatherNativeModules:
 
 
 class TestComputeBackendBuildArgsWithNative:
-    """Tests for --suppress-native-package in _compute_backend_build_args."""
+    """Tests for native module handling in _compute_backend_build_args."""
 
-    def test_private_dep_with_native_transitive(self, tmp_path):
-        """Private dep has a native transitive dep -> suppress it."""
+    def test_native_not_in_host_suppressed(self, tmp_path):
+        """Native dep NOT in host -> suppress it."""
         _make_plugin_dir(
             tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
             dependencies={"ssh2": "^1.0.0"},
@@ -1168,8 +1180,30 @@ class TestComputeBackendBuildArgsWithNative:
         )
         assert "--suppress-native-package cpu-features" in result
 
-    def test_no_native_deps_no_suppress(self, tmp_path):
-        """Private dep with no native transitive deps -> no suppress flags."""
+    def test_native_in_host_still_suppressed(self, tmp_path):
+        """Native dep IN host -> still suppressed unconditionally."""
+        _make_plugin_dir(
+            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            dependencies={"ssh2": "^1.0.0"},
+        )
+        _make_node_module(
+            tmp_path, "ssh2",
+            dependencies={"cpu-features": "^0.0.9"},
+        )
+        _make_node_module(
+            tmp_path, "cpu-features",
+            dependencies={"node-gyp-build": "^4.0.0"},
+        )
+
+        host = {"cpu-features"}
+        result = PluginListConfig._compute_backend_build_args(
+            tmp_path, "plugins/backend",
+            tmp_path / "plugins/backend/package.json", host,
+        )
+        assert "--suppress-native-package cpu-features" in result
+
+    def test_no_native_deps_no_flags(self, tmp_path):
+        """Private dep with no native transitive deps -> no suppress or share flags."""
         _make_plugin_dir(
             tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
             dependencies={"lodash": "^4.0.0"},
@@ -1181,6 +1215,7 @@ class TestComputeBackendBuildArgsWithNative:
             tmp_path / "plugins/backend/package.json", set(),
         )
         assert "--suppress-native-package" not in result
+        assert "--shared-package" not in result
 
     def test_combined_embed_and_suppress(self, tmp_path):
         """Embed, unshare, AND suppress flags all present."""
@@ -1212,8 +1247,8 @@ class TestComputeBackendBuildArgsWithNative:
         assert "--embed-package @custom/lib" in result
         assert "--suppress-native-package cpu-features" in result
 
-    def test_args_ordering(self, tmp_path):
-        """Flags are ordered: --embed-package, --shared-package, --suppress-native-package."""
+    def test_args_ordering_with_suppress(self, tmp_path):
+        """Flags ordered: --embed, --shared-package !, --suppress-native-package."""
         _make_plugin_dir(
             tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
             dependencies={
@@ -1240,10 +1275,9 @@ class TestComputeBackendBuildArgsWithNative:
             tmp_path / "plugins/backend/package.json", set(),
         )
         embed_idx = result.index("--embed-package")
-        shared_idx = result.index("--shared-package")
+        shared_idx = result.index("--shared-package !")
         suppress_idx = result.index("--suppress-native-package")
         assert embed_idx < shared_idx < suppress_idx
-
 
 class TestComputeBackendBuildArgsEmbeddedBackstageNative:
     """Native modules in embedded @backstage/* deps should be suppressed."""
@@ -1375,10 +1409,10 @@ class TestComputeBackendBuildArgsSiblingNative:
         assert result == ""
 
 
-class TestCreateDefaultWithNativeSuppression:
-    """End-to-end tests for create_default with native module suppression."""
+class TestCreateDefaultWithNativeHandling:
+    """End-to-end tests for create_default with native module handling."""
 
-    def test_native_dep_detected_end_to_end(self, tmp_path, monkeypatch):
+    def test_native_not_in_host_suppressed(self, tmp_path, monkeypatch):
         lockfile = tmp_path / "host-yarn.lock"
         lockfile.write_text('"@backstage/core@npm:^1.0.0":\n  version: 1.0.0\n')
         monkeypatch.setattr(constants, "HOST_LOCKFILE", lockfile)
@@ -1402,7 +1436,6 @@ class TestCreateDefaultWithNativeSuppression:
         config = PluginListConfig.create_default(workspace)
         args = config.get_plugins()["plugins/backend"]
         assert "--suppress-native-package cpu-features" in args
-
 
 class TestPluginListConfigPopulateBuildArgs:
     """Tests for PluginListConfig.populate_build_args method."""

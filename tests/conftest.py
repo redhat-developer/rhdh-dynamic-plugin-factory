@@ -10,6 +10,12 @@ from unittest.mock import MagicMock
 from dotenv import dotenv_values
 
 from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+from src.rhdh_dynamic_plugin_factory.plugin_list_config import PluginListConfig
+
+
+@pytest.fixture(autouse=True)
+def _clear_host_packages_cache():
+    PluginListConfig._host_packages_cache = None
 
 
 def _write_source_json(directory: Path, repo: str, repo_ref: str, workspace_path: str = ".") -> None:
