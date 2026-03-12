@@ -767,7 +767,7 @@ Error: Unable to validate plugin entry points: Error: The package "isolated-vm" 
 Fixed `plugins-list.yaml` entry:
 
 ```yaml
-plugins/scaffolder-backend: --allow-native-package isolated-vm --suppress-native-package napi-build-utils
+plugins/scaffolder-backend: --shared-package isolated-vm --suppress-native-package napi-build-utils
 ```
 
 ## Local Development & Contributing
