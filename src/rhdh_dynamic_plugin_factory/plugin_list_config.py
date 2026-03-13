@@ -198,6 +198,15 @@ class PluginListConfig:
         plugins: Dict[str, str] = {}
         host_packages = cls._get_host_packages()
 
+        # Corner case: if the workspace root has a valid backstage role, add it as a plugin
+        root_pkg_json = workspace_path / constants.PKG_JSON
+        if root_pkg_json.is_file():
+            role = cls._read_backstage_role(root_pkg_json)
+            if role and role in constants.VALID_BACKSTAGE_PLUGIN_ROLES:
+                plugins["."] = cls._compute_plugin_build_args(
+                    workspace_path, ".", root_pkg_json, host_packages,
+                )
+
         for pkg_json_path in cls._find_package_jsons(workspace_path):
             role = cls._read_backstage_role(pkg_json_path)
             if role and role in constants.VALID_BACKSTAGE_PLUGIN_ROLES:

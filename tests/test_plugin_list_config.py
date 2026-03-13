@@ -207,6 +207,26 @@ class TestPluginListConfigToFile:
         assert "''" not in content
         assert '""' not in content
 
+    def test_to_file_roundtrip_dot_key(self, tmp_path):
+        """Test that '.' as a plugin key survives a to_file -> from_file roundtrip."""
+        original = PluginListConfig({
+            ".": "--embed-package @backstage/new-pkg",
+        })
+        out = tmp_path / "plugins-list.yaml"
+        original.to_file(out)
+
+        loaded = PluginListConfig.from_file(out)
+        assert loaded.get_plugins() == original.get_plugins()
+
+    def test_to_file_dot_key_no_args(self, tmp_path):
+        """Test that '.' key with no args produces '.:' in the output."""
+        config = PluginListConfig({".": ""})
+        out = tmp_path / "plugins-list.yaml"
+        config.to_file(out)
+
+        content = out.read_text()
+        assert ".:" in content
+
 
 def _make_plugin_dir(base, rel_path, name, role, dependencies=None):
     """Helper to create a plugin directory with a package.json."""
@@ -389,6 +409,62 @@ class TestPluginListConfigCreateDefault:
         assert len(plugins) == 2
         assert "plugins/ecs/frontend" in plugins
         assert "plugins/ecs/backend" in plugins
+
+    def test_discovers_root_package_json_as_plugin(self, tmp_path):
+        """Test that a root package.json with a valid backstage role is discovered with key '.'."""
+        pkg = {
+            "name": "@parfuemerie-douglas/scaffolder-backend-module-azure-pipelines",
+            "version": "1.3.0",
+            "backstage": {"role": "backend-plugin-module"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert len(plugins) == 1
+        assert "." in plugins
+
+    def test_root_package_json_without_backstage_role_ignored(self, tmp_path):
+        """Test that a root package.json without backstage.role is ignored (normal monorepo root)."""
+        pkg = {"name": "my-workspace", "version": "1.0.0", "private": True}
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        _make_plugin_dir(tmp_path, "plugins/todo", "@test/plugin-todo", "frontend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert "." not in plugins
+        assert "plugins/todo" in plugins
+
+    def test_root_package_json_with_non_plugin_role_ignored(self, tmp_path):
+        """Test that a root package.json with a non-plugin role (e.g. common-library) is ignored."""
+        pkg = {
+            "name": "@test/my-common",
+            "version": "1.0.0",
+            "backstage": {"role": "common-library"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+
+        config = PluginListConfig.create_default(tmp_path)
+        assert config.get_plugins() == {}
+
+    def test_root_plugin_coexists_with_subdirectory_plugins(self, tmp_path):
+        """Test that root plugin '.' and subdirectory plugins are both discovered."""
+        pkg = {
+            "name": "@test/root-backend",
+            "version": "1.0.0",
+            "backstage": {"role": "backend-plugin"},
+        }
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        _make_plugin_dir(tmp_path, "plugins/todo", "@test/plugin-todo", "frontend-plugin")
+
+        config = PluginListConfig.create_default(tmp_path)
+        plugins = config.get_plugins()
+
+        assert len(plugins) == 2
+        assert "." in plugins
+        assert "plugins/todo" in plugins
 
 
 class TestParseHostPackages:
@@ -1628,6 +1704,29 @@ class TestPluginListConfigPopulateBuildArgs:
         cfg.populate_build_args(workspace)
 
         assert cfg.get_plugins()["plugins/simple-backend"] == ""
+
+    def test_dot_key_resolves_to_root_package_json(self, tmp_path, monkeypatch):
+        """Test that '.' as a plugin key resolves to the root package.json."""
+        lockfile = tmp_path / "host-yarn.lock"
+        lockfile.write_text('"@backstage/core@npm:^1.0.0":\n  version: 1.0.0\n')
+        monkeypatch.setattr(constants, "HOST_LOCKFILE", lockfile)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        pkg = {
+            "name": "@test/scaffolder-backend-module-azure",
+            "version": "1.0.0",
+            "backstage": {"role": "backend-plugin-module"},
+            "dependencies": {"@backstage/new-experimental": "^0.1.0"},
+        }
+        (workspace / "package.json").write_text(json.dumps(pkg))
+
+        cfg = PluginListConfig({".": ""})
+        cfg.populate_build_args(workspace)
+
+        args = cfg.get_plugins()["."]
+        assert "--embed-package @backstage/new-experimental" in args
+        assert "--shared-package !@backstage/new-experimental" in args
 
 
 class TestLogBuildArgsDiff:
