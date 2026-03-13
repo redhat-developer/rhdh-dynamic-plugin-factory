@@ -38,7 +38,7 @@ example-config-gitlab/
 
 ### Configuration Files
 
-- **`source.json`**: Specifies the GitLab plugin repository and git eference to clone from
+- **`source.json`**: Specifies the GitLab plugin repository and git reference to clone from. The `repo-ref` field is optional; when omitted, the repository's default branch is used. The `workspace-path` field can also be set here instead of using `--workspace-path`.
 - **`plugins-list.yaml`**: List of path to the GitLab frontend and backend packages to build
 - **`packages/gitlab-backend/overlay/`**: Contains replacement source files
 
@@ -68,12 +68,11 @@ podman run --rm -it \
   --device /dev/fuse \
   -v ./examples/example-config-gitlab:/config:z \
   -v ./outputs:/outputs:z \
-  -f ./source:/source:z \
+  -v ./source:/source:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
-  --workspace-path .
 ```
 
-Note: `--workspace-path .` is used because this repository does not follow the backstage community plugins (BCP) repository structure where there are multiple yarn workspaces. Instead the plugins are stored in the main workspace, so root of the workspace is also the root of the repository in this example.
+Note: `workspace-path` is set to `.` in the `source.json` because this repository does not follow the backstage community plugins (BCP) repository structure where there are multiple yarn workspaces. Instead the plugins are stored in the main workspace, so root of the workspace is also the root of the repository in this example.
 
 ### Local Development
 
@@ -81,6 +80,18 @@ From the repository root, run:
 
 ```bash
 python -m src.rhdh_dynamic_plugin_factory \
+  --config-dir ./examples/example-config-gitlab \
+  --workspace-path . \
+  --repo-path ./source \
+  --output-dir ./outputs
+```
+
+Or using CLI args instead of `source.json`:
+
+```bash
+python -m src.rhdh_dynamic_plugin_factory \
+  --source-repo https://github.com/immobiliare/backstage-plugin-gitlab \
+  --source-ref v6.13.0 \
   --config-dir ./examples/example-config-gitlab \
   --workspace-path . \
   --repo-path ./source \

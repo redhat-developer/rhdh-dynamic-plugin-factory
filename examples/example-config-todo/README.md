@@ -41,7 +41,7 @@ example-config-todo/
 
 ### Configuration Files
 
-- **`source.json`**: Specifies the Backstage Community Plugins repository and git reference to clone from
+- **`source.json`**: Specifies the Backstage Community Plugins repository and git reference to clone from. The `repo-ref` field is optional; when omitted, the repository's default branch is used. The `workspace-path` field can also be set here instead of using `--workspace-path`.
 - **`plugins-list.yaml`**: Lists the path to the TODO frontend and backend plugins to build with respect to the workspace path
 - **`plugins/todo/scalprum-config.json`**: Custom Scalprum configuration that will be overlaid on top of the plugin source directory
 
@@ -57,8 +57,9 @@ podman run --rm -it \
   -v ./examples/example-config-todo:/config:z \
   -v ./outputs:/outputs:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
-  --workspace-path workspaces/todo
 ```
+
+When `--source-ref` is omitted, the repository's default branch is used automatically.
 
 ### Local Development
 
@@ -66,6 +67,17 @@ From the repository root, run:
 
 ```bash
 python -m src.rhdh_dynamic_plugin_factory \
+  --config-dir ./examples/example-config-todo \
+  --repo-path ./source \
+  --output-dir ./outputs
+```
+
+Or using CLI args instead of `source.json`:
+
+```bash
+python -m src.rhdh_dynamic_plugin_factory \
+  --source-repo https://github.com/backstage/community-plugins \
+  --source-ref main \
   --config-dir ./examples/example-config-todo \
   --repo-path ./source \
   --workspace-path workspaces/todo \

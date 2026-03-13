@@ -2,10 +2,13 @@
 Utility functions for RHDH Plugin Factory.
 """
 
+import shutil
 import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, Callable
+
+from .exceptions import ExecutionError, PluginFactoryError
 
 
 def _stream_output(pipe, log_func: Callable[[str], None]) -> None:
@@ -111,3 +114,68 @@ def display_export_results(workspace_path: Path, logger) -> bool:
     
     return has_failures
 
+def clean_directory(directory: Path) -> None:
+    """Clean the directory by removing all contents but keeping the directory itself.
+    This is to handle cleaning volume mounted directories.
+    
+    Args:
+        directory: Path to the directory to clean.
+    Raises:
+        ExecutionError: If the directory or files cannot be removed.
+    """
+    try:
+        for item in directory.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+    except Exception as e:
+        raise ExecutionError(
+            f"Failed to clean directory '{directory}': {e}",
+            step="clean directory",
+            returncode=1,
+        ) from e
+
+def prompt_or_clean_directory(path: Path, clean: bool, logger) -> None:
+    """Clears contents of a non-empty directory by automatically or by prompting the user.
+    
+    If the directory is empty or does not exist, this is a no-op.
+    
+    Args:
+        path: Directory to clean
+        clean: If True, auto-clean without prompting.
+        logger: Logger instance.
+    
+    Raises:
+        PluginFactoryError: If the user declines to clean.
+        ExecutionError: If the directory or files cannot be removed. (Thrown from clean_directory)
+    """
+    if not path.exists() or not any(path.iterdir()):
+        return
+    
+    logger.warning(f"[yellow]Source directory {path} is not empty[/yellow]")
+    if clean:
+        logger.warning(f"[yellow]`--clean` argument set, automatically cleaning {path}[/yellow]")
+        clean_directory(path)
+    else:
+        logger.warning(f"[yellow]WARNING: Are you sure you want to remove the contents of {path}/? \\[y/N][/yellow]")
+        confirm = input()
+        if confirm.lower() != "y":
+            logger.warning("[yellow]Aborted[/yellow]")
+            raise PluginFactoryError("Directory clean aborted by user")
+        else:
+            logger.warning(f"[yellow]`y` selected. Cleaning {path}. Note: you can use the `--clean` argument to automatically clean the directory and skip this prompt next time.[/yellow]")
+            clean_directory(path)
+
+
+def repo_dir_name(repo_url: str) -> str:
+    """Derive a directory name from a git repository URL.
+    
+    Examples:
+        https://github.com/backstage/community-plugins.git -> community-plugins
+        https://github.com/awslabs/backstage-plugins-for-aws -> backstage-plugins-for-aws
+    """
+    name = repo_url.rstrip("/").rsplit("/", 1)[-1]
+    if name.endswith(".git"):
+        name = name[:-4]
+    return name
