@@ -44,7 +44,7 @@ def test_full_config_flow(self, make_config):
 
 ## Container E2E Tests
 
-> **Note:** E2E tests are not yet implemented. The `tests/e2e/` directory does not exist. The following guidance is for future implementation.
+> E2E tests are implemented in `tests/e2e/`. The `E2E_IMAGE` env var is **required** (no default fallback).
 
 - **Location**: `tests/e2e/`.
 - **Goal**: Validate that the container image works correctly with the provided `examples/`.
