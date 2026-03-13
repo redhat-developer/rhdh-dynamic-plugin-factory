@@ -26,39 +26,42 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # Download the PR metadata artifact uploaded by PR Publish since we can't get PR info from the github event
+      - name: Download PR metadata
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          persist-credentials: false
+          name: e2e-pr-metadata
+          path: /tmp/e2e-pr-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Resolve PR number using gh cli — works for both same-repo and fork PRs.
-      # github.event.workflow_run.pull_requests is empty for fork PRs.
-      # See https://github.com/orgs/community/discussions/25220
-      - name: Resolve PR number
+      - name: Read PR metadata
         id: pr-info
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_BRANCH: |-
-            ${{
-              (github.event.workflow_run.head_repository.owner.login != github.event.workflow_run.repository.owner.login)
-                && format('{0}:{1}', github.event.workflow_run.head_repository.owner.login, github.event.workflow_run.head_branch)
-                || github.event.workflow_run.head_branch
-            }}
-          PR_TARGET_REPO: ${{ github.repository }}
         run: |
-          echo "Resolving PR for branch: ${PR_BRANCH}"
-          PR_NUMBER=$(gh pr view --repo "${PR_TARGET_REPO}" "${PR_BRANCH}" --json number --jq '.number')
+          if [[ ! -f "/tmp/e2e-pr-metadata/pr-info.json" ]]; then
+            echo "Error: PR metadata file not found"
+            exit 1
+          fi
+
+          PR_NUMBER=$(jq -r '.pr_number' /tmp/e2e-pr-metadata/pr-info.json)
+          COMMIT_SHA=$(jq -r '.commit_sha' /tmp/e2e-pr-metadata/pr-info.json)
+          SHORT_SHA=$(jq -r '.short_sha' /tmp/e2e-pr-metadata/pr-info.json)
 
           if ! [[ "$PR_NUMBER" =~ ^[0-9]{1,7}$ ]]; then
-            echo "Error: Could not resolve a valid PR number from branch '${PR_BRANCH}'"
-            echo "Resolved value: '${PR_NUMBER}'"
+            echo "Error: Invalid PR number from metadata: '${PR_NUMBER}'"
             exit 1
           fi
 
           IMAGE="${REGISTRY}/${REGISTRY_IMAGE}:pr-${PR_NUMBER}"
           echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "image=${IMAGE}" >> $GITHUB_OUTPUT
-          echo "Resolved PR #${PR_NUMBER}, image: ${IMAGE}"
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Resolved PR #${PR_NUMBER}, commit: ${SHORT_SHA}, image: ${IMAGE}"
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
