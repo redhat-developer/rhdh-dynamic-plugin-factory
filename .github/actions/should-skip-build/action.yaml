@@ -18,6 +18,10 @@ inputs:
     description: 'Regex patterns to match files for skip logic (space, comma, or newline-separated)'
     required: false
     default: '\.md$'
+  pr-number:
+    description: 'PR number for first-build protection. When set, skips only if a pr-{number} image already exists in the registry.'
+    required: false
+    default: ''
 outputs:
   should_skip:
     description: 'Whether the build should be skipped (true/false)'
@@ -29,7 +33,7 @@ runs:
   using: 'composite'
   steps:
     - name: Install skopeo
-      if: inputs.check-image == 'true'
+      if: inputs.check-image == 'true' || inputs.pr-number != ''
       shell: bash
       run: |
         if ! command -v skopeo &> /dev/null; then
@@ -93,13 +97,26 @@ runs:
             ;;
             
           pull_request|pull_request_target)
-            echo "Pull request event detected"
-            if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-              # Find the merge base between PR base and HEAD
+            echo "Pull request event detected (action: ${{ github.event.action }})"
+            
+            # For synchronize events, use incremental diff (since last push)
+            # to avoid rebuilding for non-build affecting commits in a PR.
+            # Fall back to full PR diff for opened/reopened or if incremental fails.
+            if [ "${{ github.event.action }}" = "synchronize" ] && [ -n "${{ github.event.before }}" ]; then
+              BEFORE_SHA="${{ github.event.before }}"
+              echo "Synchronize event — attempting incremental diff against previous HEAD: ${BEFORE_SHA}"
+              if CHANGED_FILES=$(git diff --name-only "${BEFORE_SHA}" HEAD 2>/dev/null); then
+                echo "Using incremental diff (since last push)"
+              else
+                echo "Warning: incremental diff failed (before SHA unreachable), falling back to full PR diff"
+                BASE_COMMIT=$(git merge-base ${{ github.event.pull_request.base.sha }} HEAD)
+                echo "Base commit (merge-base): $BASE_COMMIT"
+                CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD)
+              fi
+            elif [ -n "${{ github.event.pull_request.base.sha }}" ]; then
               BASE_COMMIT=$(git merge-base ${{ github.event.pull_request.base.sha }} HEAD)
               echo "Base commit (merge-base): $BASE_COMMIT"
               CHANGED_FILES=$(git diff --name-only "$BASE_COMMIT" HEAD)
-
             else
               echo "Warning: No PR base SHA available, skipping file check"
               echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
@@ -177,9 +194,36 @@ runs:
         done <<< "$CHANGED_FILES"
         
         if [ "$ALL_FILES_MATCH_PATTERN" = "true" ]; then
-          SHOULD_SKIP="true"
-          SKIP_REASON="All changed files match skip patterns: $FILE_PATTERNS"
-          echo "✓ All changed files match skip patterns - build will be skipped"
+          echo "✓ All changed files match skip patterns"
+          
+          # First-build protection: when pr-number is set, only skip if a PR
+          # image already exists. This ensures the first build always runs so
+          # that e2e tests have an image to test against.
+          PR_NUMBER="${{ inputs.pr-number }}"
+          if [ -n "$PR_NUMBER" ]; then
+            echo ""
+            echo "::group::First-build protection — checking for existing PR image"
+            PR_IMAGE_TAG="docker://${{ inputs.registry }}/${{ inputs.image }}:pr-${PR_NUMBER}"
+            echo "Checking for PR image: ${PR_IMAGE_TAG}"
+            
+            skopeo inspect "${PR_IMAGE_TAG}" &>/dev/null
+            PR_IMAGE_EXISTS=$?
+            
+            if [ $PR_IMAGE_EXISTS -eq 0 ]; then
+              SHOULD_SKIP="true"
+              SKIP_REASON="All changed files match skip patterns and PR image pr-${PR_NUMBER} already exists"
+              echo "PR image exists - safe to skip build"
+            else
+              SHOULD_SKIP="false"
+              SKIP_REASON="All changed files match skip patterns but no PR image exists yet — first build needed for e2e tests"
+              echo "No PR image found - first build required"
+            fi
+            echo "::endgroup::"
+          else
+            SHOULD_SKIP="true"
+            SKIP_REASON="All changed files match skip patterns: $FILE_PATTERNS"
+            echo "Build will be skipped"
+          fi
         else
           echo "✗ Found ${#NON_MATCHING_FILES[@]} file(s) not matching skip patterns:"
           printf '  - %s\n' "${NON_MATCHING_FILES[@]}"
