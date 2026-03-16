@@ -53,7 +53,14 @@ run_cli() {
     # we WANT cli_args to split by spaces here
     # shellcheck disable=SC2068
     if ! "${cli_bin[@]}" ${cli_args_split[@]} >/tmp/export-dynamic-cli.log 2>&1; then
-        echo "Error running CLI: $(cat /tmp/export-dynamic-cli.log)"
+        echo "Error running CLI: "
+		echo "##########################################################"
+        cat /tmp/export-dynamic-cli.log
+		echo "##########################################################"
+        if [[ -f yarn-install.log ]]; then 
+		  cat yarn-install.log; 
+		  echo "##########################################################"
+		fi
         return 1
     fi
     rm -f /tmp/export-dynamic-cli.log
