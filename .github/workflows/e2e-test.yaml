@@ -76,19 +76,21 @@ jobs:
           pip install -r requirements.dev.txt
 
       - name: Pull container image
+        id: pull-image
+        continue-on-error: true
         env:
           IMAGE: ${{ steps.pr-info.outputs.image }}
         run: |
           echo "Pulling image: ${IMAGE}"
           if ! podman pull "${IMAGE}"; then
-            echo "Error: Failed to pull image '${IMAGE}'"
-            echo "This indicates the PR build/publish pipeline failed or the image has expired."
+            echo "::warning::Failed to pull image '${IMAGE}'. The PR build may have been skipped or the image has expired."
             exit 1
           fi
           echo "Successfully pulled ${IMAGE}"
           podman inspect "${IMAGE}" --format '{{.Id}}'
 
       - name: Run E2E tests
+        if: steps.pull-image.outcome == 'success'
         id: e2e-tests
         continue-on-error: true
         env:
@@ -107,7 +109,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Generate test summary
-        if: always() && steps.e2e-tests.outcome != 'skipped'
+        if: always() && steps.pr-info.outcome == 'success'
         env:
           IMAGE: ${{ steps.pr-info.outputs.image }}
           PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
@@ -115,6 +117,7 @@ jobs:
           E2E_RUN_ID: ${{ github.run_id }}
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
+          PULL_OUTCOME: ${{ steps.pull-image.outcome }}
         run: |
           python3 << 'PYTHON_SCRIPT'
           import xml.etree.ElementTree as ET
@@ -126,89 +129,99 @@ jobs:
           e2e_run_id = os.environ["E2E_RUN_ID"]
           server_url = os.environ["SERVER_URL"]
           repository = os.environ["REPOSITORY"]
+          pull_outcome = os.environ["PULL_OUTCOME"]
           summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
 
           with open(summary_file, "a") as f:
-              try:
-                  tree = ET.parse("e2e-results.xml")
-                  root = tree.getroot()
-                  suite = root.find("testsuite") if root.tag != "testsuite" else root
-
-                  tests = int(suite.get("tests", "0"))
-                  failures = int(suite.get("failures", "0"))
-                  errors = int(suite.get("errors", "0"))
-                  skipped = int(suite.get("skipped", "0"))
-                  time_taken = float(suite.get("time", "0"))
-                  passed = tests - failures - errors - skipped
-
-                  all_passed = (failures + errors) == 0
-                  status_emoji = "✅" if all_passed else "❌"
-                  status_text = "Passed" if all_passed else "Failed"
-
-                  f.write(f"## {status_emoji} E2E Test Results — {status_text}\n\n")
-                  f.write(f"**Image:** `{image}`\n")
-                  f.write(f"**PR:** #{pr_number}\n")
-                  f.write(f"**Duration:** {time_taken:.1f}s\n\n")
-
-                  f.write("| Status | Count |\n")
-                  f.write("|--------|-------|\n")
-                  f.write(f"| ✅ Passed | {passed} |\n")
-                  f.write(f"| ❌ Failed | {failures} |\n")
-                  f.write(f"| 💥 Errors | {errors} |\n")
-                  f.write(f"| ⏭️ Skipped | {skipped} |\n")
-                  f.write(f"| **Total** | **{tests}** |\n\n")
-
-                  f.write("### Test Details\n\n")
-                  f.write("| Test | Status | Duration |\n")
-                  f.write("|------|--------|----------|\n")
-
-                  for tc in suite.iter("testcase"):
-                      name = tc.get("name", "unknown")
-                      tc_time = float(tc.get("time", "0"))
-
-                      failure = tc.find("failure")
-                      error = tc.find("error")
-                      skip = tc.find("skipped")
-
-                      if failure is not None:
-                          tc_status = "❌ Failed"
-                      elif error is not None:
-                          tc_status = "💥 Error"
-                      elif skip is not None:
-                          tc_status = "⏭️ Skipped"
-                      else:
-                          tc_status = "✅ Passed"
-
-                      f.write(f"| `{name}` | {tc_status} | {tc_time:.1f}s |\n")
-
-                  f.write("\n")
-
-                  has_failures = False
-                  for tc in suite.iter("testcase"):
-                      failure = tc.find("failure")
-                      error = tc.find("error")
-                      detail = failure if failure is not None else error
-
-                      if detail is not None:
-                          if not has_failures:
-                              f.write("### Failure Details\n\n")
-                              has_failures = True
-
-                          name = tc.get("name", "unknown")
-                          message = detail.get("message", "")
-                          text = detail.text or ""
-                          if len(text) > 3000:
-                              text = text[:3000] + "\n... (truncated)"
-
-                          f.write(f"<details>\n<summary><code>{name}</code>: {message[:200]}</summary>\n\n")
-                          f.write(f"```\n{text}\n```\n\n")
-                          f.write("</details>\n\n")
-
-              except FileNotFoundError:
-                  f.write("## ❌ E2E Test Results\n\n")
+              if pull_outcome != "success":
+                  f.write("## ⚠️ E2E Tests — Image Not Available\n\n")
                   f.write(f"**Image:** `{image}`\n")
                   f.write(f"**PR:** #{pr_number}\n\n")
-                  f.write("No test results file found. Tests may have failed to start.\n\n")
+                  f.write("The PR container image could not be pulled. "
+                          "This typically means the PR build was skipped "
+                          "(e.g., only non-build files were changed) or the image has expired.\n\n")
+                  f.write("E2E tests were **not executed**.\n\n")
+              else:
+                  try:
+                      tree = ET.parse("e2e-results.xml")
+                      root = tree.getroot()
+                      suite = root.find("testsuite") if root.tag != "testsuite" else root
+
+                      tests = int(suite.get("tests", "0"))
+                      failures = int(suite.get("failures", "0"))
+                      errors = int(suite.get("errors", "0"))
+                      skipped = int(suite.get("skipped", "0"))
+                      time_taken = float(suite.get("time", "0"))
+                      passed = tests - failures - errors - skipped
+
+                      all_passed = (failures + errors) == 0
+                      status_emoji = "✅" if all_passed else "❌"
+                      status_text = "Passed" if all_passed else "Failed"
+
+                      f.write(f"## {status_emoji} E2E Test Results — {status_text}\n\n")
+                      f.write(f"**Image:** `{image}`\n")
+                      f.write(f"**PR:** #{pr_number}\n")
+                      f.write(f"**Duration:** {time_taken:.1f}s\n\n")
+
+                      f.write("| Status | Count |\n")
+                      f.write("|--------|-------|\n")
+                      f.write(f"| ✅ Passed | {passed} |\n")
+                      f.write(f"| ❌ Failed | {failures} |\n")
+                      f.write(f"| 💥 Errors | {errors} |\n")
+                      f.write(f"| ⏭️ Skipped | {skipped} |\n")
+                      f.write(f"| **Total** | **{tests}** |\n\n")
+
+                      f.write("### Test Details\n\n")
+                      f.write("| Test | Status | Duration |\n")
+                      f.write("|------|--------|----------|\n")
+
+                      for tc in suite.iter("testcase"):
+                          name = tc.get("name", "unknown")
+                          tc_time = float(tc.get("time", "0"))
+
+                          failure = tc.find("failure")
+                          error = tc.find("error")
+                          skip = tc.find("skipped")
+
+                          if failure is not None:
+                              tc_status = "❌ Failed"
+                          elif error is not None:
+                              tc_status = "💥 Error"
+                          elif skip is not None:
+                              tc_status = "⏭️ Skipped"
+                          else:
+                              tc_status = "✅ Passed"
+
+                          f.write(f"| `{name}` | {tc_status} | {tc_time:.1f}s |\n")
+
+                      f.write("\n")
+
+                      has_failures = False
+                      for tc in suite.iter("testcase"):
+                          failure = tc.find("failure")
+                          error = tc.find("error")
+                          detail = failure if failure is not None else error
+
+                          if detail is not None:
+                              if not has_failures:
+                                  f.write("### Failure Details\n\n")
+                                  has_failures = True
+
+                              name = tc.get("name", "unknown")
+                              message = detail.get("message", "")
+                              text = detail.text or ""
+                              if len(text) > 3000:
+                                  text = text[:3000] + "\n... (truncated)"
+
+                              f.write(f"<details>\n<summary><code>{name}</code>: {message[:200]}</summary>\n\n")
+                              f.write(f"```\n{text}\n```\n\n")
+                              f.write("</details>\n\n")
+
+                  except FileNotFoundError:
+                      f.write("## ❌ E2E Test Results\n\n")
+                      f.write(f"**Image:** `{image}`\n")
+                      f.write(f"**PR:** #{pr_number}\n\n")
+                      f.write("No test results file found. Tests may have failed to start.\n\n")
 
               f.write("### Traceability\n\n")
               f.write(f"- **Publish:** [{server_url}/{repository}/actions/runs/{publish_run_id}]")
@@ -226,6 +239,7 @@ jobs:
           E2E_RUN_ID: ${{ github.run_id }}
           PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
           TEST_OUTCOME: ${{ steps.e2e-tests.outcome }}
+          PULL_OUTCOME: ${{ steps.pull-image.outcome }}
         with:
           script: |
             const prNumber = parseInt(process.env.PR_NUMBER);
@@ -233,64 +247,85 @@ jobs:
             const e2eRunId = process.env.E2E_RUN_ID;
             const publishRunId = process.env.PUBLISH_RUN_ID;
             const testOutcome = process.env.TEST_OUTCOME;
+            const pullOutcome = process.env.PULL_OUTCOME;
 
             const e2eUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${e2eRunId}`;
             const publishUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${publishRunId}`;
 
-            let testSummary = '';
-            const fs = require('fs');
-            try {
-              const xml = fs.readFileSync('e2e-results.xml', 'utf8');
-              const testsMatch = xml.match(/tests="(\d+)"/);
-              const failuresMatch = xml.match(/failures="(\d+)"/);
-              const errorsMatch = xml.match(/errors="(\d+)"/);
-              const timeMatch = xml.match(/time="([\d.]+)"/);
+            let statusEmoji, statusText, statusDetail, testSummary;
 
-              const total = testsMatch ? parseInt(testsMatch[1]) : 0;
-              const failures = failuresMatch ? parseInt(failuresMatch[1]) : 0;
-              const errors = errorsMatch ? parseInt(errorsMatch[1]) : 0;
-              const time = timeMatch ? parseFloat(timeMatch[1]).toFixed(1) : '?';
-              const passed = total - failures - errors;
-
-              testSummary = [
-                '| Tests | Passed | Failed | Duration |',
-                '|-------|--------|--------|----------|',
-                `| ${total} | ${passed} | ${failures + errors} | ${time}s |`,
+            if (pullOutcome !== 'success') {
+              statusEmoji = '⚠️';
+              statusText = 'Skipped — Image Not Available';
+              statusDetail = [
+                'The PR container image could not be pulled. This typically means the PR build',
+                'was skipped (e.g., only non-build files were changed) or the image has expired.',
+                '',
+                'E2E tests were **not executed**.',
               ].join('\n');
-            } catch (e) {
-              testSummary = '_No detailed results available._';
+              testSummary = '';
+            } else {
+              statusEmoji = testOutcome === 'success' ? '✅' : '❌';
+              statusText = testOutcome === 'success' ? 'Passed' : 'Failed';
+              statusDetail = testOutcome === 'success'
+                ? 'All end-to-end integration tests passed for the container image.'
+                : 'End-to-end integration tests failed for the container image. See the workflow run for details.';
+
+              testSummary = '';
+              const fs = require('fs');
+              try {
+                const xml = fs.readFileSync('e2e-results.xml', 'utf8');
+                const testsMatch = xml.match(/tests="(\d+)"/);
+                const failuresMatch = xml.match(/failures="(\d+)"/);
+                const errorsMatch = xml.match(/errors="(\d+)"/);
+                const timeMatch = xml.match(/time="([\d.]+)"/);
+
+                const total = testsMatch ? parseInt(testsMatch[1]) : 0;
+                const failures = failuresMatch ? parseInt(failuresMatch[1]) : 0;
+                const errors = errorsMatch ? parseInt(errorsMatch[1]) : 0;
+                const time = timeMatch ? parseFloat(timeMatch[1]).toFixed(1) : '?';
+                const passed = total - failures - errors;
+
+                testSummary = [
+                  '| Tests | Passed | Failed | Duration |',
+                  '|-------|--------|--------|----------|',
+                  `| ${total} | ${passed} | ${failures + errors} | ${time}s |`,
+                ].join('\n');
+              } catch (e) {
+                testSummary = '_No detailed results available._';
+              }
             }
 
-            const statusEmoji = testOutcome === 'success' ? '✅' : '❌';
-            const statusText = testOutcome === 'success' ? 'Passed' : 'Failed';
-            const statusDetail = testOutcome === 'success'
-              ? 'All end-to-end integration tests passed for the container image.'
-              : 'End-to-end integration tests failed for the container image. See the workflow run for details.';
-
-            const body = [
+            const bodyParts = [
               `## ${statusEmoji} E2E Tests ${statusText}`,
               '',
               statusDetail,
               '',
               `**Image:** \`${image}\``,
-              '',
-              testSummary,
+            ];
+
+            if (testSummary) {
+              bodyParts.push('', testSummary);
+            }
+
+            bodyParts.push(
               '',
               '### Traceability',
               '',
               `- **Publish:** [PR Publish #${publishRunId}](${publishUrl})`,
               `- **E2E:** [E2E Tests #${e2eRunId}](${e2eUrl})`,
-            ].join('\n');
+            );
+
+            const body = bodyParts.join('\n');
 
             await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
+              ...context.repo,
               issue_number: prNumber,
-              body: body
+              body: body,
             });
 
       - name: Fail workflow if tests failed
-        if: steps.e2e-tests.outcome != 'success'
+        if: always() && steps.e2e-tests.outcome == 'failure'
         run: |
           echo "E2E tests failed. Failing workflow."
           exit 1
@@ -300,8 +335,28 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'failure'
     permissions:
+      actions: read
       pull-requests: write
     steps:
+      - name: Download PR metadata
+        id: download-metadata
+        continue-on-error: true
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: e2e-pr-metadata
+          path: /tmp/e2e-pr-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read PR metadata
+        id: pr-info
+        if: steps.download-metadata.outcome == 'success'
+        run: |
+          PR_NUMBER=$(jq -r '.pr_number' /tmp/e2e-pr-metadata/pr-info.json)
+          if [[ "$PR_NUMBER" =~ ^[0-9]{1,7}$ ]]; then
+            echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          fi
+
       - name: E2E Skipped Summary
         env:
           PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -313,3 +368,36 @@ jobs:
           echo "The upstream PR Publish workflow failed. E2E tests were not run." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **PR Publish:** [Run #${PUBLISH_RUN_ID}](${SERVER_URL}/${REPOSITORY}/actions/runs/${PUBLISH_RUN_ID}) (failed)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR
+        if: steps.pr-info.outputs.pr_number != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          E2E_RUN_ID: ${{ github.run_id }}
+          PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER);
+            const e2eRunId = process.env.E2E_RUN_ID;
+            const publishRunId = process.env.PUBLISH_RUN_ID;
+
+            const e2eUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${e2eRunId}`;
+            const publishUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${publishRunId}`;
+
+            const body = [
+              '## ⏭️ E2E Tests Skipped',
+              '',
+              'The upstream PR Publish workflow failed. E2E tests were **not executed**.',
+              '',
+              '### Traceability',
+              '',
+              `- **Publish:** [PR Publish #${publishRunId}](${publishUrl}) (failed)`,
+              `- **E2E:** [E2E Tests #${e2eRunId}](${e2eUrl})`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: body,
+            });
