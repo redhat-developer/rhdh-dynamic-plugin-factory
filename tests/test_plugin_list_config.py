@@ -968,8 +968,8 @@ class TestComputeBackendBuildArgsDeepTransitive:
         assert result == ""
 
 
-class TestCreateDefaultWithEmbedArgs:
-    """End-to-end tests for create_default with Phase 2 embed/unshare detection."""
+class TestDiscoverThenPopulateBuildArgs:
+    """End-to-end tests for the two-phase flow: create_default (discovery) + populate_build_args."""
 
     def test_aws_ecs_like_workspace(self, tmp_path, monkeypatch):
         """Backend plugin with third-party dep that has @backstage/* sub-deps."""
@@ -1001,28 +1001,18 @@ class TestCreateDefaultWithEmbedArgs:
         )
 
         config = PluginListConfig.create_default(workspace)
+        assert config.get_plugins()["plugins/ecs/frontend"] == ""
+        assert config.get_plugins()["plugins/ecs/backend"] == ""
+
+        config.populate_build_args(workspace)
         plugins = config.get_plugins()
 
         assert plugins["plugins/ecs/frontend"] == ""
         assert "--embed-package @aws/aws-core-plugin-for-backstage-common" in plugins["plugins/ecs/backend"]
         assert "--shared-package" not in plugins["plugins/ecs/backend"]
 
-    def test_frontend_plugins_get_no_args(self, tmp_path, monkeypatch):
-        lockfile = tmp_path / "host-yarn.lock"
-        lockfile.write_text("")
-        monkeypatch.setattr(constants, "HOST_LOCKFILE", lockfile)
-
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        _make_plugin_dir(
-            workspace, "plugins/todo",
-            "@backstage-community/plugin-todo", "frontend-plugin",
-        )
-
-        config = PluginListConfig.create_default(workspace)
-        assert config.get_plugins()["plugins/todo"] == ""
-
-    def test_backend_no_deps_no_args(self, tmp_path, monkeypatch):
+    def test_create_default_never_computes_build_args(self, tmp_path, monkeypatch):
+        """create_default returns all plugins with empty build args."""
         lockfile = tmp_path / "host-yarn.lock"
         lockfile.write_text('"@backstage/core@npm:^1.0.0":\n  version: 1.0.0\n')
         monkeypatch.setattr(constants, "HOST_LOCKFILE", lockfile)
@@ -1030,15 +1020,21 @@ class TestCreateDefaultWithEmbedArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/todo-backend",
-            "@backstage-community/plugin-todo-backend", "backend-plugin",
+            workspace, "plugins/my-backend",
+            "@test/my-backend", "backend-plugin",
+            dependencies={"@backstage/new-experimental": "^0.1.0"},
+        )
+        _make_plugin_dir(
+            workspace, "plugins/todo",
+            "@backstage-community/plugin-todo", "frontend-plugin",
         )
 
         config = PluginListConfig.create_default(workspace)
-        assert config.get_plugins()["plugins/todo-backend"] == ""
+        for args in config.get_plugins().values():
+            assert args == ""
 
-    def test_backstage_dep_not_in_host_unshared_and_embedded(self, tmp_path, monkeypatch):
-        """@backstage/* direct dep missing from host gets both embed and unshare."""
+    def test_populate_adds_args_after_discovery(self, tmp_path, monkeypatch):
+        """populate_build_args computes args for plugins discovered by create_default."""
         lockfile = tmp_path / "host-yarn.lock"
         lockfile.write_text('"@backstage/core@npm:^1.0.0":\n  version: 1.0.0\n')
         monkeypatch.setattr(constants, "HOST_LOCKFILE", lockfile)
@@ -1052,6 +1048,9 @@ class TestCreateDefaultWithEmbedArgs:
         )
 
         config = PluginListConfig.create_default(workspace)
+        assert config.get_plugins()["plugins/my-backend"] == ""
+
+        config.populate_build_args(workspace)
         args = config.get_plugins()["plugins/my-backend"]
         assert "--embed-package @backstage/new-experimental" in args
         assert "--shared-package !@backstage/new-experimental" in args
@@ -1071,6 +1070,9 @@ class TestCreateDefaultWithEmbedArgs:
         )
 
         config = PluginListConfig.create_default(workspace)
+        assert config.get_plugins()["plugins/backend"] == ""
+
+        config.populate_build_args(workspace)
         args = config.get_plugins()["plugins/backend"]
         assert "--embed-package @backstage/catalog-model" in args
         assert "--shared-package !@backstage/catalog-model" in args
@@ -1485,8 +1487,8 @@ class TestComputeBackendBuildArgsSiblingNative:
         assert result == ""
 
 
-class TestCreateDefaultWithNativeHandling:
-    """End-to-end tests for create_default with native module handling."""
+class TestDiscoverThenPopulateWithNativeHandling:
+    """End-to-end tests for two-phase flow with native module handling."""
 
     def test_native_not_in_host_suppressed(self, tmp_path, monkeypatch):
         lockfile = tmp_path / "host-yarn.lock"
@@ -1510,6 +1512,9 @@ class TestCreateDefaultWithNativeHandling:
         )
 
         config = PluginListConfig.create_default(workspace)
+        assert config.get_plugins()["plugins/backend"] == ""
+
+        config.populate_build_args(workspace)
         args = config.get_plugins()["plugins/backend"]
         assert "--suppress-native-package cpu-features" in args
 

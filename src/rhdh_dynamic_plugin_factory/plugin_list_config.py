@@ -74,8 +74,8 @@ class PluginListConfig:
     def populate_build_args(self, workspace_path: Path) -> "PluginListConfig":
         """(Re)compute build arguments for every plugin in the list.
 
-        Uses the same dependency analysis as :meth:`create_default` but only
-        for the plugins already present in ``self.plugins``.  All existing
+        Performs dependency analysis against the bundled RHDH host lockfile
+        for all plugins already present in ``self.plugins``.  All existing
         build args are overwritten with freshly computed values.
 
         A before/after diff is logged for each plugin whose args changed so
@@ -180,40 +180,34 @@ class PluginListConfig:
 
     @classmethod
     def create_default(cls, workspace_path: Path) -> "PluginListConfig":
-        """Create a default plugin list by scanning workspace for Backstage plugins.
+        """Discover Backstage plugins in the workspace by scanning for package.json files.
 
         Recursively walks *workspace_path* to find ``package.json`` files whose
         ``backstage.role`` matches one of :pyattr:`VALID_BACKSTAGE_PLUGIN_ROLES`.
 
-        For backend plugins, dependency analysis is performed against the
-        bundled RHDH host lockfile to determine ``--embed-package`` and
-        ``--shared-package`` arguments.
+        Only plugin paths are recorded; build arguments are left empty.
+        Use :meth:`populate_build_args` after dependency installation to
+        compute build arguments.
 
         Args:
             workspace_path: Absolute path to the workspace root.
 
         Returns:
-            A :class:`PluginListConfig` with discovered plugins and build arg(s) (if any).
+            A :class:`PluginListConfig` with discovered plugin paths (build args empty).
         """
         plugins: Dict[str, str] = {}
-        host_packages = cls._get_host_packages()
 
-        # Corner case: if the workspace root has a valid backstage role, add it as a plugin
         root_pkg_json = workspace_path / constants.PKG_JSON
         if root_pkg_json.is_file():
             role = cls._read_backstage_role(root_pkg_json)
             if role and role in constants.VALID_BACKSTAGE_PLUGIN_ROLES:
-                plugins["."] = cls._compute_plugin_build_args(
-                    workspace_path, ".", root_pkg_json, host_packages,
-                )
+                plugins["."] = ""
 
         for pkg_json_path in cls._find_package_jsons(workspace_path):
             role = cls._read_backstage_role(pkg_json_path)
             if role and role in constants.VALID_BACKSTAGE_PLUGIN_ROLES:
                 plugin_dir = pkg_json_path.parent.relative_to(workspace_path).as_posix()
-                plugins[plugin_dir] = cls._compute_plugin_build_args(
-                    workspace_path, plugin_dir, pkg_json_path, host_packages,
-                )
+                plugins[plugin_dir] = ""
 
         sorted_plugins = dict[str, str](sorted(plugins.items()))
         cls.logger.debug(f"Discovered {len(sorted_plugins)} plugin(s) in {workspace_path}")

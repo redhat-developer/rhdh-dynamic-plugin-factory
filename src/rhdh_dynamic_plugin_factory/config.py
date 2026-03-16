@@ -249,85 +249,106 @@ class PluginFactoryConfig:
         else:
             self.logger.debug(f"Using {PLUGIN_LIST_FILE} from: {plugins_file}")
     
-    def auto_generate_plugins_list(self, config_dir: Optional[str] = None,
-                                    repo_path: Optional[str] = None,
-                                    workspace_path: Optional[str] = None,
-                                    generate_build_args: bool = False) -> None:
-        """Auto-generate plugins-list.yaml, or populate build args for an existing one.
+    def discover_plugins_list(
+        self,
+        config_dir: Optional[str] = None,
+        repo_path: Optional[str] = None,
+        workspace_path: Optional[str] = None,
+    ) -> bool:
+        """Phase 1: Discover plugins and generate plugins-list.yaml if missing.
 
-        When the file does not exist, a full scan is performed (all plugins
-        in the workspace are discovered).
+        Scans the workspace for ``package.json`` files with a valid
+        ``backstage.role`` and writes a ``plugins-list.yaml`` containing
+        only plugin paths (no build arguments).
 
-        When the file already exists and ``generate_build_args``*`` is ``True``,
-        build arguments are (re)computed for every plugin listed in the file.
+        This must run **before** overlays are applied, since
+        ``override-sources.sh`` reads ``plugins-list.yaml`` to decide
+        which plugin directories receive overlay files.
 
         Args:
-            config_dir: Config directory containing plugins-list.yaml. Defaults to self.config_dir.
+            config_dir: Config directory for plugins-list.yaml. Defaults to self.config_dir.
             repo_path: Repository path. Defaults to self.repo_path.
             workspace_path: Workspace path relative to repo. Defaults to self.workspace_path.
-            generate_build_args: If True, recompute build args for an existing plugins-list.yaml.
+
+        Returns:
+            ``True`` if the file was auto-generated, ``False`` if it already existed.
 
         Raises:
-            PluginFactoryError: If auto-generation or build-arg population fails.
+            PluginFactoryError: If discovery fails.
         """
         config_dir = config_dir or self.config_dir
         repo_path = repo_path or self.repo_path
         workspace_path = workspace_path or self.workspace_path
-        
+
         plugins_file = os.path.join(config_dir, PLUGIN_LIST_FILE)
-        
+
         if os.path.exists(plugins_file):
-            if generate_build_args:
-                self._populate_build_args_for_existing(plugins_file, repo_path, workspace_path)
-            else:
-                self.logger.debug(f"[green]{PLUGIN_LIST_FILE} already exists at {plugins_file}. Skipping auto-generation.[/green]")
-            return
-        
-        self.logger.info(f"[bold blue]Auto-generating {PLUGIN_LIST_FILE}[/bold blue]")
-        
+            self.logger.debug(
+                f"[green]{PLUGIN_LIST_FILE} already exists at {plugins_file}. "
+                f"Skipping discovery.[/green]"
+            )
+            return False
+
         if not os.path.exists(repo_path):
             raise PluginFactoryError(f"Source code repository does not exist at {repo_path}")
 
         workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
+        self.logger.info(f"[bold blue]Discovering plugins in workspace: {workspace_full_path}[/bold blue]")
+
         if not os.path.exists(workspace_full_path):
             raise PluginFactoryError(f"Plugin workspace does not exist at {workspace_full_path}")
-        
+
         try:
             plugin_cfg = PluginListConfig.create_default(workspace_path=Path(workspace_full_path))
             plugin_cfg.to_file(Path(plugins_file))
-            
+
             plugins: Dict[str, str] = plugin_cfg.get_plugins()
             if plugins:
                 self.logger.info(f"Generated {PLUGIN_LIST_FILE} with {len(plugins)} plugin(s)")
-                for plugin_path, build_args in plugins.items():
-                    if build_args:
-                        self.logger.info(f"  - {plugin_path}: {build_args}")
-                    else:
-                        self.logger.info(f"  - {plugin_path}")
+                for plugin_path in plugins:
+                    self.logger.info(f"  - {plugin_path}")
             else:
                 self.logger.warning("No plugins found in workspace")
         except PluginFactoryError:
             raise
         except Exception as e:
-            raise PluginFactoryError(f"Failed to auto-generate plugins list: {e}") from e
+            raise PluginFactoryError(f"Failed to discover plugins: {e}") from e
 
-    def _populate_build_args_for_existing(
-        self, plugins_file: str, repo_path: str, workspace_path: str,
+        return True
+
+    def populate_plugins_build_args(
+        self,
+        config_dir: Optional[str] = None,
+        repo_path: Optional[str] = None,
+        workspace_path: Optional[str] = None,
     ) -> None:
-        """Load an existing plugins-list.yaml, recompute build args, and write it back.
+        """Compute build arguments for an existing plugins-list.yaml.
+
+        Loads ``plugins-list.yaml``, runs dependency analysis via
+        :meth:`PluginListConfig.populate_build_args`, and writes the
+        updated file back.  This requires ``node_modules`` to be installed.
 
         Args:
-            plugins_file: Absolute path to the plugins-list.yaml file.
-            repo_path: Repository root path.
-            workspace_path: Workspace path relative to repo_path.
+            config_dir: Config directory containing plugins-list.yaml. Defaults to self.config_dir.
+            repo_path: Repository path. Defaults to self.repo_path.
+            workspace_path: Workspace path relative to repo. Defaults to self.workspace_path.
 
         Raises:
-            PluginFactoryError: If the workspace cannot be found or population fails.
+            PluginFactoryError: If the file is missing, workspace not found, or computation fails.
         """
-        self.logger.warning(
-            f"[yellow]--generate-build-args: Modifying existing {PLUGIN_LIST_FILE} "
-            f"to (re)compute build arguments. Your file will be overwritten.[/yellow]"
-        )
+        config_dir = config_dir or self.config_dir
+        repo_path = repo_path or self.repo_path
+        workspace_path = workspace_path or self.workspace_path
+
+        plugins_file = os.path.join(config_dir, PLUGIN_LIST_FILE)
+
+        if not os.path.exists(plugins_file):
+            raise PluginFactoryError(
+                f"{PLUGIN_LIST_FILE} not found at {plugins_file}. "
+                f"Cannot compute build arguments without a plugin list."
+            )
+
+        self.logger.info(f"[bold blue]Computing build arguments for {plugins_file}[/bold blue]")
 
         workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
         if not os.path.exists(workspace_full_path):
@@ -341,7 +362,7 @@ class PluginFactoryConfig:
             raise
         except Exception as e:
             raise PluginFactoryError(
-                f"Failed to populate build args for {PLUGIN_LIST_FILE}: {e}"
+                f"Failed to compute build args for {plugins_file}: {e}"
             ) from e
     
     def discover_source_config(self) -> Optional["SourceConfig"]:

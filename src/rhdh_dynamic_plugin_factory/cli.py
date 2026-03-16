@@ -201,8 +201,14 @@ def _process_workspace(
         repo_path: Path to the repository checkout for this workspace.
         workspace_path: Relative path from repo_path to the workspace.
         output_dir: Output directory for build artifacts.
-        generate_build_args: If True, (re)compute build args for an existing plugins-list.yaml.
+        generate_build_args: If True, (re)compute build args for a user-provided plugins-list.yaml.
     """
+    was_auto_generated = config.discover_plugins_list(
+        config_dir=workspace_config_dir,
+        repo_path=repo_path,
+        workspace_path=workspace_path,
+    )
+
     logger.info("[bold blue]Applying Patches and Overlays[/bold blue]")
     config.apply_patches_and_overlays(
         config_dir=workspace_config_dir,
@@ -214,12 +220,12 @@ def _process_workspace(
     full_workspace_path = Path(repo_path).joinpath(workspace_path).absolute()
     install_dependencies(full_workspace_path)
 
-    config.auto_generate_plugins_list(
-        config_dir=workspace_config_dir,
-        repo_path=repo_path,
-        workspace_path=workspace_path,
-        generate_build_args=generate_build_args,
-    )
+    if was_auto_generated or generate_build_args:
+        config.populate_plugins_build_args(
+            config_dir=workspace_config_dir,
+            repo_path=repo_path,
+            workspace_path=workspace_path,
+        )
 
     logger.info("[bold blue]Exporting plugins using RHDH CLI[/bold blue]")
     config.export_plugins(
