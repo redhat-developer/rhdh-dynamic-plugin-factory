@@ -5,7 +5,7 @@ This directory contains various example plugins to export in multi-workspace mod
 ## Directory Structure
 
 ```bash
-example-oconfig-multi-workspace/
+example-config-multi-workspace/
 ├── todo/                       # Workspace: TODO plugins from community-plugins
 │   ├── source.json             # repo, repo-ref, workspace-path for this workspace
 │   └── plugins-list.yaml       # Plugins to build from the TODO workspace
