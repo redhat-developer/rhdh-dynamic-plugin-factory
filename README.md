@@ -298,6 +298,8 @@ podman run --rm -it \
 
 This approach keeps your credentials separate from the config directory and can be useful for CI/CD pipelines or when you want to reuse the same environment file across different configurations.
 
+WARNING: `--env-file` will NOT strip quotations from the environmental variables. This means `REGISTRY_URL="quay.io"` will literally resolve to `"quay.io"` instead of `quay.io` which will cause issues with image publishing.
+
 ### Plugin List Auto-Generation
 
 If no `plugins-list.yaml` file is provided for a workspace, the factory will scan the **entire** workspace, discover **all** frontend/backend plugins, compute build arguments for backend plugins and generate a `plugins-list.yaml` with the required build arguments.
