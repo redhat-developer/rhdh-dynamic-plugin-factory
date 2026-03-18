@@ -226,11 +226,11 @@ Note: `source/` in this case refers to the default source code location if not p
 
 #### 1. `default.env` (Provided)
 
-This file contains required version settings and defaults for RHDH CLI:
+The version of the `rhdh-cli` being used can be set via the `RHDH_CLI_VERSION`, and is set to `latest` by default. Override it in your `.env` file to change the version if you need to use an older cli.
 
 ```bash
 # Tooling versions
-RHDH_CLI_VERSION="1.10.0"
+RHDH_CLI_VERSION="latest"
 ```
 
 #### 2. `config/source.json` (Required for remote repositories, unless using `--source-repo`)
