@@ -57,10 +57,15 @@ run_cli() {
 		echo "##########################################################"
         cat /tmp/export-dynamic-cli.log
 		echo "##########################################################"
-        if [[ -f yarn-install.log ]]; then 
-		  cat yarn-install.log; 
-		  echo "##########################################################"
-		fi
+
+        # Search for both types of log files for backwards compatibility
+        local yarn_install_logs=("yarn-install.log" "rhdh-cli.yarn-install.log")
+        for log_file in "${yarn_install_logs[@]}"; do
+            if [[ -f "$log_file" ]]; then
+                cat "$log_file"
+                echo "##########################################################"
+            fi
+        done
         return 1
     fi
     rm -f /tmp/export-dynamic-cli.log
