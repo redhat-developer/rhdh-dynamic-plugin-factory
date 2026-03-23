@@ -14,7 +14,7 @@ try:
     from .logger import setup_logging, get_logger
     from .config import PluginFactoryConfig
     from .source_config import WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
-    from .utils import run_command_with_streaming, prompt_or_clean_directory
+    from .utils import run_command_with_streaming, prompt_or_clean_directory, collect_build_logs
     from .exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 except ImportError:
     # For direct script execution, add parent directory to path
@@ -23,7 +23,7 @@ except ImportError:
     from rhdh_dynamic_plugin_factory.logger import setup_logging, get_logger
     from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
     from rhdh_dynamic_plugin_factory.source_config import WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
-    from rhdh_dynamic_plugin_factory.utils import run_command_with_streaming, prompt_or_clean_directory
+    from rhdh_dynamic_plugin_factory.utils import run_command_with_streaming, prompt_or_clean_directory, collect_build_logs
     from rhdh_dynamic_plugin_factory.exceptions import PluginFactoryError, ConfigurationError, ExecutionError
 
 logger = get_logger("cli")
@@ -169,6 +169,9 @@ def install_dependencies(workspace_path: Path) -> None:
                 env=env
             )
             
+            if cmd[:2] == ["yarn", "install"]:
+                collect_build_logs(logger)
+
             if returncode != 0:
                 raise ExecutionError(
                     f"{description} failed with exit code {returncode}",

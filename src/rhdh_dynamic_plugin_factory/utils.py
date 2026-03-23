@@ -4,6 +4,7 @@ Utility functions for RHDH Plugin Factory.
 
 import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Optional, Callable
@@ -83,6 +84,49 @@ def run_command_with_streaming(
     process.wait()
     
     return process.returncode
+
+
+def collect_build_logs(logger, tmp_dir: Optional[Path] = None) -> None:
+    """Find and display build log files left by failed native package builds.
+    
+    Scans a temp directory for build.log files (typically created by yarn when
+    native dependencies fail to compile) and logs their full contents.
+    
+    Args:
+        logger: Logger instance to use for output.
+        tmp_dir: Directory to scan for build.log files. Defaults to the
+                 system temp directory (usually /tmp).
+    """
+    search_dir = tmp_dir or Path(tempfile.gettempdir())
+
+    try:
+        build_logs = sorted(search_dir.rglob("build.log"))
+    except OSError as e:
+        logger.warning(f"[yellow]Could not find build logs in {search_dir}: {e}[/yellow]")
+        return
+
+    if not build_logs:
+        logger.warning(f"[yellow]No build logs found in {search_dir}[/yellow]")
+        return
+
+    logger.warning(
+        f"[yellow]Found {len(build_logs)} build log(s) that may contain details about the failure:[/yellow]"
+    )
+
+    for log_path in build_logs:
+        try:
+            contents = log_path.read_text().strip()
+        except OSError:
+            logger.warning(f"[yellow]Could not read build log: {log_path}[/yellow]")
+            continue
+
+        if not contents:
+            logger.warning(f"[yellow]Empty build log: {log_path}[/yellow]")
+            continue
+
+        logger.warning(f"[yellow]Build log: {log_path}[/yellow]")
+        for line in contents.splitlines():
+            logger.warning(f"  {line}")
 
 
 def display_export_results(workspace_path: Path, logger) -> bool:
