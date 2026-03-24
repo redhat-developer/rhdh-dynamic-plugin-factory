@@ -126,6 +126,12 @@ The container requires specific capabilities and device access for building dyna
 
 The `--device /dev/fuse` flag passes the FUSE device from the Linux environment (native on Linux, or from Podman Machine's VM on macOS/Windows) to the container, enabling buildah operations.
 
+**macOS Note:** When using `podman machine`, the default `applehv` VM may cause issues with native module building during `yarn install`. If you encounter build failures, try using the `libkrun` VM instead:
+
+```bash
+podman machine init --provider libkrun
+```
+
 ### Basic Container Usage
 
 ```bash
