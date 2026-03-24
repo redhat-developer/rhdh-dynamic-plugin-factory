@@ -51,6 +51,12 @@ Container-based development provides consistency and isolation.
   podman machine start
   ```
 
+**macOS Note:** When using `podman machine`, the default `applehv` VM may cause issues with native module building during `yarn install`. If you encounter build failures, try using the `libkrun` VM instead:
+
+```bash
+podman machine init --provider libkrun
+```
+
 #### Building the Development Image
 
 ```bash
