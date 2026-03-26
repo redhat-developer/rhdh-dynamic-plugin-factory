@@ -4,6 +4,6 @@
 coverage==7.13.4
 mypy==1.19.1
 pytest==9.0.2
-pytest-cov==7.0.0
+pytest-cov==7.1.0
 ruff==0.15.5
 types-PyYAML==6.0.12.20250915
