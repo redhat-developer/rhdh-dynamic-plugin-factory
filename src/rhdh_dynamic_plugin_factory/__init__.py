@@ -8,10 +8,18 @@ automated build orchestration for Backstage plugins.
 
 from .__version__ import __version__
 from .cli import main, create_parser
-from .config import (
-    PluginFactoryConfig,
+from .config import PluginFactoryConfig
+from .source_config import (
     SourceConfig,
-    PluginListConfig,
+    WorkspaceInfo,
+    discover_workspaces,
+    clone_workspaces_with_worktrees,
+)
+from .plugin_list_config import PluginListConfig
+from .exceptions import (
+    PluginFactoryError,
+    ConfigurationError,
+    ExecutionError,
 )
 from .logger import (
     setup_logging,
@@ -21,6 +29,9 @@ from .logger import (
 from .utils import (
     run_command_with_streaming,
     display_export_results,
+    clean_directory,
+    prompt_or_clean_directory,
+    repo_dir_name,
 )
 
 __all__ = [
@@ -31,7 +42,15 @@ __all__ = [
     # Configuration
     "PluginFactoryConfig",
     "SourceConfig",
+    "WorkspaceInfo",
     "PluginListConfig",
+    "discover_workspaces",
+    "clone_workspaces_with_worktrees",
+    
+    # Exceptions
+    "PluginFactoryError",
+    "ConfigurationError",
+    "ExecutionError",
     
     # Logging
     "setup_logging",
@@ -41,7 +60,9 @@ __all__ = [
     # Utilities
     "run_command_with_streaming",
     "display_export_results",
-    
+    "clean_directory",
+    "prompt_or_clean_directory",
+    "repo_dir_name",
     # Version
     "__version__",
 ]

@@ -22,6 +22,8 @@ RUN microdnf install -y --nodocs \
   brotli-devel openssl-devel buildah bash patch jq fuse-overlayfs \
   && microdnf clean all
 
+ENV PYTHON=/usr/bin/python3.12
+
 COPY requirements.txt .
 
 # Install Python Dependencies

@@ -41,7 +41,7 @@ example-config-aws-ecs/
 
 ### Configuration Files
 
-- **`source.json`**: Specifies the AWS plugins repository and git reference to clone from
+- **`source.json`**: Specifies the AWS plugins repository and git reference to clone from. The `repo-ref` field is optional; when omitted, the repository's default branch is used. The `workspace-path` field can also be set here instead of using `--workspace-path`.
 - **`plugins-list.yaml`**: Lists plugins with `--embed-package` arguments for shared dependencies
 - **`backstage.json`**: Backstage configuration file
 - **`patches/`**: Contains patch files
@@ -109,10 +109,9 @@ podman run --rm -it \
   -v ./examples/example-config-aws-ecs:/config:z \
   -v ./outputs:/outputs:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest \
-  --workspace-path .
 ```
 
-Note: `--workspace-path .` is used because this repository does not follow the backstage community plugins (BCP) repository structure where there are multiple yarn workspaces. Instead the plugins are stored in the main workspace, so root of the workspace is also the root of the repository in this example.
+Note: `workspace-path` is set to `.` in `source.json` because this repository does not follow the backstage community plugins (BCP) repository structure where there are multiple yarn workspaces. Instead the plugins are stored in the main workspace, so root of the workspace is also the root of the repository in this example.
 
 ### Local Development
 
@@ -120,6 +119,17 @@ From the repository root, run:
 
 ```bash
 python -m src.rhdh_dynamic_plugin_factory \
+  --config-dir ./examples/example-config-aws-ecs \
+  --repo-path ./source \
+  --output-dir ./outputs
+```
+
+Or using CLI args instead of `source.json`:
+
+```bash
+python -m src.rhdh_dynamic_plugin_factory \
+  --source-repo https://github.com/awslabs/backstage-plugins-for-aws \
+  --source-ref 78df9399a81cfd95265cab53815f54210b1d7f50 \
   --config-dir ./examples/example-config-aws-ecs \
   --workspace-path . \
   --repo-path ./source \

@@ -133,7 +133,9 @@ Once you have the local environment set up, you can run the factory directly wit
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./config \
   --workspace-path workspaces/todo \
-  --output-dir ./outputs
+  --repo-path ./source \
+  --output-dir ./outputs \
+  --clean
 ```
 
 #### Build and push to registry
@@ -153,7 +155,9 @@ Then run:
 python -m src.rhdh_dynamic_plugin_factory \
   --config-dir ./config \
   --workspace-path workspaces/announcements \
-  --push-images
+  --repo-path ./source/ \
+  --push-images \
+  --clean
 ```
 
 The factory will automatically read the registry credentials from `./config/.env`.
@@ -174,25 +178,35 @@ python -m src.rhdh_dynamic_plugin_factory \
 ```bash
 rhdh-dynamic-plugin-factory/
 ├── src/rhdh_dynamic_plugin_factory/
-│   ├── __init__.py              # Package initialization
+│   ├── __init__.py              # Package initialization and public API
 │   ├── __main__.py              # Package entry point
 │   ├── cli.py                   # CLI implementation and argument parsing
 │   ├── config.py                # Configuration classes and validation
+│   ├── constants.py             # Shared constants and configuration values
+│   ├── exceptions.py            # Custom exception hierarchy
 │   ├── logger.py                # Logging setup and utilities
+│   ├── plugin_list_config.py    # Plugin list YAML handling and build-arg computation
+│   ├── source_config.py         # Source repository and multi-workspace configuration
 │   └── utils.py                 # Utility functions
 ├── scripts/
 │   ├── export-workspace.sh      # Plugin export script (called by CLI)
 │   └── override-sources.sh      # Patch/overlay application script
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py              # Pytest fixtures and configuration
-│   ├── test_config.py           # Configuration tests
-│   ├── test_plugin_list_config.py  # Plugin list parsing tests
-│   └── test_source_config.py    # Source configuration tests
+│   ├── conftest.py                          # Pytest fixtures and configuration
+│   ├── test_cli.py                          # CLI argument parsing tests
+│   ├── test_config_export_plugins.py        # Plugin export tests
+│   ├── test_config_load_from_env.py         # Environment loading tests
+│   ├── test_config_patches_and_overlays.py  # Patch/overlay tests
+│   ├── test_config_registry.py              # Registry configuration tests
+│   ├── test_multi_workspace.py              # Multi-workspace mode tests
+│   ├── test_plugin_list_config.py           # Plugin list and build-arg tests
+│   └── test_source_config.py                # Source configuration tests
 ├── examples/                    # Example configuration sets
 │   ├── example-config-todo/
 │   ├── example-config-gitlab/
-│   └── example-config-aws-ecs/
+│   ├── example-config-aws-ecs/
+│   └── example-config-multi-workspace/
 ├── .cursor/rules/               # Development guidelines
 │   ├── commit-standards.mdc
 │   ├── documentation-standards.mdc
@@ -209,9 +223,13 @@ rhdh-dynamic-plugin-factory/
 
 ### Key Components
 
-- **`cli.py`**: Handles command-line arguments, orchestrates the build process
+- **`cli.py`**: Handles command-line arguments, orchestrates the build process (single and multi-workspace)
 - **`config.py`**: Loads and validates configuration from files and environment
+- **`constants.py`**: Shared constants (plugin roles, skip directories, native module markers)
+- **`exceptions.py`**: Custom exception hierarchy (`PluginFactoryError`, `ConfigurationError`, `ExecutionError`)
 - **`logger.py`**: Configures structured logging with color output
+- **`plugin_list_config.py`**: Plugin list YAML loading/saving and build-argument computation logic
+- **`source_config.py`**: Source repository configuration, git cloning, and multi-workspace discovery
 - **`utils.py`**: Helper functions for file operations, subprocess execution
 - **`export-workspace.sh`**: Shell script that calls the RHDH CLI to export plugins
 - **`override-sources.sh`**: Applies patches and overlays to source code
@@ -255,15 +273,6 @@ pytest tests/ --cov=src/rhdh_dynamic_plugin_factory --cov-report=term-missing
 ```
 
 This will show which lines of code are not covered by tests.
-
-### Run Tests in Watch Mode
-
-For active development, you can use pytest-watch:
-
-```bash
-pip install pytest-watch
-ptw tests/
-```
 
 ### Writing Tests
 

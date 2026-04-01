@@ -7,7 +7,7 @@ globs: tests/test_*.py
 ## General Principles
 - All unit tests must reside in the `tests/` directory.
 - Use **class-based grouping** for tests (e.g., `class TestClassName:`).
-- One test file per module (e.g., `test_config.py` for `config.py`).
+- One test file per class or method group. For small modules, use `test_<module>.py`. When tests exceed ~300-400 lines, split into `test_<module>_<method_or_class>.py`.
 - Ensure **100% isolation**: No network calls, no real file system changes outside `tmp_path`, no system command execution.
 
 ## Test Structure
@@ -81,11 +81,15 @@ def test_with_registry_config(self, make_config):
 ```
 
 ## Naming Conventions
-- Files: `test_<module_name>.py`
+- Files: `test_<module_name>.py` for small modules, or `test_<module_name>_<method_or_class>.py` when a module's tests exceed ~300-400 lines
 - Classes: `Test<ClassName><MethodName>` (optional MethodName if grouping by method)
 - Functions: `test_<scenario_description>`
 
 ## Current Test Files
-- `test_config.py`: Tests for `PluginFactoryConfig` class (load_from_env, load_registry_config, apply_patches_and_overlays, export_plugins)
+- `test_cli.py`: Tests for CLI argument parsing (`create_parser`)
+- `test_config_load_from_env.py`: Tests for `PluginFactoryConfig.load_from_env` method
+- `test_config_registry.py`: Tests for `PluginFactoryConfig.load_registry_config` method
+- `test_config_patches_and_overlays.py`: Tests for `PluginFactoryConfig.apply_patches_and_overlays` method
+- `test_config_export_plugins.py`: Tests for `PluginFactoryConfig.export_plugins` method
 - `test_source_config.py`: Tests for `SourceConfig` class (from_file, clone_to_path)
 - `test_plugin_list_config.py`: Tests for `PluginListConfig` class (from_file, get_plugins, add_plugin, remove_plugin)
