@@ -108,7 +108,7 @@ class SourceConfig:
             ExecutionError: If git ls-remote fails or the default branch cannot be determined.
         """
         logger = get_logger("source_config")
-        logger.info(f"[cyan]Resolving default branch for {repo}cyan]")
+        logger.info(f"[cyan]Resolving default branch for {repo}[/cyan]")
         
         try:
             result = subprocess.run(

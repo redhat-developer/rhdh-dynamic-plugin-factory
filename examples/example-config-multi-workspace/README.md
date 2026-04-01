@@ -30,7 +30,7 @@ Each subdirectory containing a `source.json` file is treated as an independent w
 ```bash
 podman run --rm -it \
   --device /dev/fuse \
-  -v ./examples/example-multi-workspace:/config:z \
+  -v ./examples/example-config-multi-workspace:/config:z \
   -v ./source:/source:z \
   -v ./outputs:/outputs:z \
   quay.io/rhdh-community/dynamic-plugins-factory:latest
@@ -42,7 +42,7 @@ Note: `--workspace-path`, `--source-repo`, and `--source-ref` cannot be used. In
 
 ```bash
 python src/rhdh_dynamic_plugin_factory \
-  --config-dir ./examples/example-multi-workspace \
+  --config-dir ./examples/example-config-multi-workspace \
   --repo-path ./source \
   --output-dir ./outputs
 ```

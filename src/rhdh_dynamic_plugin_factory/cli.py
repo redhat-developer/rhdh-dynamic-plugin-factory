@@ -126,7 +126,7 @@ Examples:
         "--clean",
         action="store_true",
         default=False,
-        help="Clean the source directory before cloning source repository. WARNING: This will all the contents of the source directory."
+        help="Clean the source directory before cloning source repository. WARNING: This will remove all the contents of the source directory."
     )
     parser.add_argument(
         "--generate-build-args",
