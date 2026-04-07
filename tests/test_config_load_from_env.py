@@ -232,3 +232,50 @@ class TestPluginFactoryConfigLoadFromEnv:
         assert config is not None
         assert config.config_dir == str(config_dir)
         assert config.repo_path == str(repo_path)
+
+    def test_load_from_env_push_images_no_validation_no_login(self, mock_args, setup_test_env, monkeypatch):
+        """push_images=True with no credentials does NOT raise at load time."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+
+        mock_args.config_dir = setup_test_env["config_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
+        mock_args.workspace_path = "."
+
+        from unittest.mock import patch as mock_patch
+        with mock_patch.object(PluginFactoryConfig, "_buildah_login") as mock_login:
+            config = PluginFactoryConfig.load_from_env(mock_args, push_images=True)
+            mock_login.assert_not_called()
+
+        assert config.push_images is True
+
+    def test_load_from_env_multi_workspace_push_images_no_validation(self, mock_args, tmp_path, monkeypatch):
+        """multi_workspace=True + push_images=True + no credentials does NOT raise."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        repo_path = tmp_path / "source"
+        repo_path.mkdir(parents=True, exist_ok=True)
+        (repo_path / "placeholder").write_text("")
+
+        mock_args.config_dir = str(config_dir)
+        mock_args.repo_path = str(repo_path)
+        mock_args.workspace_path = "."
+
+        config = PluginFactoryConfig.load_from_env(
+            mock_args, push_images=True, multi_workspace=True,
+        )
+        assert config.push_images is True
+        assert config.registry_url is None
+
+    def test_load_from_env_reads_registry_auth_file(self, mock_args, setup_test_env, monkeypatch):
+        """REGISTRY_AUTH_FILE env var is read into config.registry_auth_file."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", "/auth.json")
+
+        mock_args.config_dir = setup_test_env["config_dir"]
+        mock_args.repo_path = setup_test_env["source_dir"]
+        mock_args.workspace_path = "."
+
+        config = PluginFactoryConfig.load_from_env(mock_args)
+        assert config.registry_auth_file == "/auth.json"

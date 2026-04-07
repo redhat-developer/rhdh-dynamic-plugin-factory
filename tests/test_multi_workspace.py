@@ -1003,8 +1003,7 @@ class TestRegistryRefresh:
             source_ref=None,
         )
         
-        with patch("src.rhdh_dynamic_plugin_factory.config.PluginFactoryConfig._buildah_login"):
-            return PluginFactoryConfig.load_from_env(args, push_images=push_images)
+        return PluginFactoryConfig.load_from_env(args, push_images=push_images)
     
     def test_updates_fields_from_environ(self, tmp_path, monkeypatch):
         """Test that refresh reads new values from os.environ."""
@@ -1051,8 +1050,8 @@ class TestRegistryRefresh:
             config.refresh_registry_config()
             mock_login.assert_not_called()
     
-    def test_validation_error_on_missing_fields_after_refresh(self, tmp_path, monkeypatch):
-        """Test that missing required fields after refresh raise ConfigurationError."""
+    def test_validation_error_on_missing_url_after_refresh(self, tmp_path, monkeypatch):
+        """Missing REGISTRY_URL after refresh raises ConfigurationError."""
         config = self._make_config(monkeypatch, tmp_path, push_images=True)
         
         monkeypatch.delenv("REGISTRY_URL")
@@ -1062,7 +1061,7 @@ class TestRegistryRefresh:
             config.refresh_registry_config()
     
     def test_namespace_change_without_cred_change_no_relogin(self, tmp_path, monkeypatch):
-        """Test that changing only namespace updates the field but skips re-login."""
+        """Changing only namespace updates the field but skips re-login."""
         config = self._make_config(monkeypatch, tmp_path, push_images=True)
         
         monkeypatch.setenv("REGISTRY_NAMESPACE", "different-ns")
@@ -1071,3 +1070,176 @@ class TestRegistryRefresh:
             config.refresh_registry_config()
             assert config.registry_namespace == "different-ns"
             mock_login.assert_not_called()
+
+    def test_refresh_reads_auth_file_from_environ(self, tmp_path, monkeypatch):
+        """REGISTRY_AUTH_FILE in env is picked up by refresh."""
+        config = self._make_config(monkeypatch, tmp_path)
+        assert config.registry_auth_file is None
+
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", "/auth.json")
+        config.refresh_registry_config()
+        assert config.registry_auth_file == "/auth.json"
+
+    def test_refresh_auth_file_change_triggers_revalidation(self, tmp_path, monkeypatch):
+        """Auth file value changing between refreshes triggers re-validation + login."""
+        config = self._make_config(monkeypatch, tmp_path, push_images=True)
+
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", "/new-auth.json")
+
+        with patch.object(config, "_buildah_login") as mock_login:
+            config.refresh_registry_config()
+            mock_login.assert_called_once()
+
+    def test_refresh_with_auth_file_no_username_password(self, tmp_path, monkeypatch):
+        """Workspace has auth file + URL + namespace but no credentials -- succeeds."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        monkeypatch.setenv("REGISTRY_URL", "quay.io")
+        monkeypatch.setenv("REGISTRY_NAMESPACE", "ns")
+        monkeypatch.setenv("REGISTRY_INSECURE", "false")
+        monkeypatch.delenv("REGISTRY_USERNAME", raising=False)
+        monkeypatch.delenv("REGISTRY_PASSWORD", raising=False)
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        repo_path = tmp_path / "source"
+        repo_path.mkdir(parents=True, exist_ok=True)
+        (repo_path / "placeholder").write_text("")
+
+        import argparse
+        args = argparse.Namespace(
+            config_dir=config_dir, repo_path=repo_path, workspace_path=".",
+            use_local=False, push_images=True, log_level="INFO",
+            source_repo=None, source_ref=None,
+        )
+        config = PluginFactoryConfig.load_from_env(args, push_images=True)
+
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", "/auth.json")
+        config.refresh_registry_config()
+        assert config.registry_auth_file == "/auth.json"
+
+
+class TestMultiWorkspaceDeferredCredentials:
+    """Integration-style tests for multi-workspace deferred credential flow."""
+
+    def _make_multi_ws_config(self, monkeypatch, tmp_path, env_vars=None):
+        """Build a config in multi-workspace mode with optional env overrides."""
+        monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
+        if env_vars:
+            for k, v in env_vars.items():
+                monkeypatch.setenv(k, v)
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        repo_path = tmp_path / "source"
+        repo_path.mkdir(parents=True, exist_ok=True)
+        (repo_path / "placeholder").write_text("")
+
+        import argparse
+        args = argparse.Namespace(
+            config_dir=config_dir, repo_path=repo_path, workspace_path=".",
+            use_local=False, push_images=True, log_level="INFO",
+            source_repo=None, source_ref=None,
+        )
+        return PluginFactoryConfig.load_from_env(
+            args, push_images=True, multi_workspace=True,
+        )
+
+    def test_root_env_no_credentials_workspace_env_has_credentials(self, tmp_path, monkeypatch):
+        """Root has URL/NS only; workspace provides username/password."""
+        config = self._make_multi_ws_config(monkeypatch, tmp_path, env_vars={
+            "REGISTRY_URL": "quay.io",
+            "REGISTRY_NAMESPACE": "ns",
+        })
+        assert config.registry_username is None
+
+        monkeypatch.setenv("REGISTRY_USERNAME", "ws-user")
+        monkeypatch.setenv("REGISTRY_PASSWORD", "ws-pass")
+
+        with patch.object(config, "_buildah_login") as mock_login:
+            config.refresh_registry_config()
+            mock_login.assert_called_once()
+        assert config.registry_username == "ws-user"
+
+    def test_root_env_empty_workspaces_provide_all_registry_config(self, tmp_path, monkeypatch):
+        """Root has NO registry vars; workspace provides everything."""
+        config = self._make_multi_ws_config(monkeypatch, tmp_path)
+        assert config.registry_url is None
+
+        monkeypatch.setenv("REGISTRY_URL", "ghcr.io")
+        monkeypatch.setenv("REGISTRY_NAMESPACE", "org")
+        monkeypatch.setenv("REGISTRY_USERNAME", "user")
+        monkeypatch.setenv("REGISTRY_PASSWORD", "pass")
+
+        with patch.object(config, "_buildah_login") as mock_login:
+            config.refresh_registry_config()
+            mock_login.assert_called_once()
+        assert config.registry_url == "ghcr.io"
+
+    def test_root_env_no_creds_workspace_also_missing_url_fails(self, tmp_path, monkeypatch):
+        """Root and workspace both missing REGISTRY_URL -- raises ConfigurationError."""
+        config = self._make_multi_ws_config(monkeypatch, tmp_path)
+
+        monkeypatch.setenv("REGISTRY_USERNAME", "user")
+        monkeypatch.setenv("REGISTRY_PASSWORD", "pass")
+
+        with pytest.raises(ConfigurationError, match="REGISTRY_URL"):
+            config.refresh_registry_config()
+
+    def test_root_env_no_creds_workspace_has_url_but_no_auth_warns(self, tmp_path, monkeypatch):
+        """Workspace has URL + NS but no credentials/auth file -- warns but succeeds."""
+        config = self._make_multi_ws_config(monkeypatch, tmp_path)
+
+        monkeypatch.setenv("REGISTRY_URL", "quay.io")
+        monkeypatch.setenv("REGISTRY_NAMESPACE", "ns")
+
+        with patch.object(config, "logger") as mock_logger:
+            with patch.object(config, "_buildah_login"):
+                config.refresh_registry_config()
+            warning_calls = [
+                c for c in mock_logger.warning.call_args_list
+                if "No explicit registry authentication" in str(c)
+            ]
+            assert len(warning_calls) == 1
+
+    def test_root_env_no_credentials_workspace_env_has_auth_file(self, tmp_path, monkeypatch):
+        """Root has nothing; workspace provides auth file + URL + namespace."""
+        config = self._make_multi_ws_config(monkeypatch, tmp_path)
+
+        monkeypatch.setenv("REGISTRY_URL", "quay.io")
+        monkeypatch.setenv("REGISTRY_NAMESPACE", "ns")
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", "/auth.json")
+
+        config.refresh_registry_config()
+        assert config.registry_auth_file == "/auth.json"
+
+    def test_mixed_workspaces_different_auth_strategies(self, tmp_path, monkeypatch):
+        """Three workspaces with different auth: user/pass, auth file, pre-auth."""
+        config = self._make_multi_ws_config(monkeypatch, tmp_path)
+
+        # WS-A: username/password
+        monkeypatch.setenv("REGISTRY_URL", "quay.io")
+        monkeypatch.setenv("REGISTRY_NAMESPACE", "ns")
+        monkeypatch.setenv("REGISTRY_USERNAME", "user")
+        monkeypatch.setenv("REGISTRY_PASSWORD", "pass")
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        with patch.object(config, "_buildah_login") as mock_login:
+            config.refresh_registry_config()
+            mock_login.assert_called_once()
+
+        # WS-B: auth file (clear creds, set auth file)
+        monkeypatch.delenv("REGISTRY_USERNAME", raising=False)
+        monkeypatch.delenv("REGISTRY_PASSWORD", raising=False)
+        monkeypatch.setenv("REGISTRY_AUTH_FILE", "/auth.json")
+        config.refresh_registry_config()
+        assert config.registry_auth_file == "/auth.json"
+
+        # WS-C: pre-authenticated (no creds, no auth file)
+        monkeypatch.delenv("REGISTRY_AUTH_FILE", raising=False)
+        with patch.object(config, "logger") as mock_logger:
+            with patch.object(config, "_buildah_login"):
+                config.refresh_registry_config()
+            warning_calls = [
+                c for c in mock_logger.warning.call_args_list
+                if "No explicit registry authentication" in str(c)
+            ]
+            assert len(warning_calls) == 1

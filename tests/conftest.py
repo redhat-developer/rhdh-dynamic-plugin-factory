@@ -182,7 +182,8 @@ def clean_env(monkeypatch: pytest.MonkeyPatch):
         "REGISTRY_USERNAME",
         "REGISTRY_PASSWORD",
         "REGISTRY_NAMESPACE",
-        "REGISTRY_INSECURE"
+        "REGISTRY_INSECURE",
+        "REGISTRY_AUTH_FILE",
     ]
     
     for var in env_vars:

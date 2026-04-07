@@ -436,6 +436,10 @@ def _run_single_workspace(args: argparse.Namespace) -> None:
             )
         logger.info(f"Using local repository at: {config.repo_path}")
 
+    if config.push_images:
+        config._validate_registry_fields()
+        config._buildah_login()
+
     _process_workspace(
         config=config,
         workspace_config_dir=str(config.config_dir),

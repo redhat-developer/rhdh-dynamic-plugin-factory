@@ -42,6 +42,7 @@ class PluginFactoryConfig:
     registry_password: Optional[str] = field(default=None)
     registry_namespace: Optional[str] = field(default=None)
     registry_insecure: bool = field(default=False)
+    registry_auth_file: Optional[str] = field(default=None)
 
     use_local: bool = field(default=False)
     push_images: bool = field(default=False)
@@ -54,6 +55,10 @@ class PluginFactoryConfig:
         Note: workspace_path is NOT validated here because it may be resolved
         later from source.json. Validation happens in cli._run() after source
         configuration discovery.
+        
+        Registry fields are NOT validated here. Validation is deferred to
+        workspace processing level so that multi-workspace mode can load
+        per-workspace .env files before checking credentials.
         """
         if not self.rhdh_cli_version:
             raise ConfigurationError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
@@ -61,22 +66,32 @@ class PluginFactoryConfig:
         # Validate source arg constraints: --source-ref requires --source-repo
         if self.source_ref and not self.source_repo:
             raise ConfigurationError("--source-ref requires --source-repo to be provided")
-        
-        if self.push_images:
-            self._validate_registry_fields()
     
     def _validate_registry_fields(self) -> None:
-        """Validate that all required registry fields are present.
+        """Validate registry fields required for pushing images.
+        
+        REGISTRY_URL and REGISTRY_NAMESPACE are hard requirements (needed to
+        construct image tags).  Authentication is validated as a warning only:
+        if neither username/password nor REGISTRY_AUTH_FILE is configured, a
+        warning is logged but execution continues -- the user may be relying
+        on pre-existing host auth (e.g. a prior ``podman login``).
         
         Raises:
-            ConfigurationError: If any required registry field is missing.
+            ConfigurationError: If REGISTRY_URL or REGISTRY_NAMESPACE is missing.
         """
         if not self.registry_url:
-            raise ConfigurationError("REGISTRY_URL environment variable is required when --push-images is enabled")
+            raise ConfigurationError("REGISTRY_URL is required when --push-images is enabled")
         if not self.registry_namespace:
-            raise ConfigurationError("REGISTRY_NAMESPACE environment variable is required when --push-images is enabled")
-        if not self.registry_username or not self.registry_password:
-            raise ConfigurationError("REGISTRY_USERNAME and REGISTRY_PASSWORD environment variables are required when --push-images is enabled")
+            raise ConfigurationError("REGISTRY_NAMESPACE is required when --push-images is enabled")
+        has_credentials = bool(self.registry_username and self.registry_password)
+        has_auth_file = bool(self.registry_auth_file)
+        if not has_credentials and not has_auth_file:
+            self.logger.warning(
+                "No explicit registry authentication configured. "
+                "Push will rely on existing buildah/podman auth "
+                "(e.g. a prior 'podman login'). If push fails, provide "
+                "REGISTRY_USERNAME/REGISTRY_PASSWORD or set REGISTRY_AUTH_FILE."
+            )
     
     def refresh_registry_config(self) -> None:
         """Re-read registry fields from os.environ and re-login if credentials changed.
@@ -93,12 +108,14 @@ class PluginFactoryConfig:
         new_password = os.getenv("REGISTRY_PASSWORD")
         new_namespace = os.getenv("REGISTRY_NAMESPACE")
         new_insecure = os.getenv("REGISTRY_INSECURE", "false").lower() == "true"
+        new_auth_file = os.getenv("REGISTRY_AUTH_FILE")
         
-        creds_changed = (
+        config_changed = (
             new_url != self.registry_url
             or new_username != self.registry_username
             or new_password != self.registry_password
             or new_insecure != self.registry_insecure
+            or new_auth_file != self.registry_auth_file
         )
         
         self.registry_url = new_url
@@ -106,8 +123,9 @@ class PluginFactoryConfig:
         self.registry_password = new_password
         self.registry_namespace = new_namespace
         self.registry_insecure = new_insecure
+        self.registry_auth_file = new_auth_file
         
-        if self.push_images and creds_changed:
+        if self.push_images and config_changed:
             self._validate_registry_fields()
             self._buildah_login()
 
@@ -119,10 +137,14 @@ class PluginFactoryConfig:
         Loads default.env first, then optionally loads additional env file to override defaults or provide additional values.
         Environment variables take precedence over .env file values.
         
+        Registry validation and login are NOT performed here.  They are
+        deferred to workspace processing level so that per-workspace ``.env``
+        files are loaded before credentials are checked.
+        
         Args:
             args: Parsed CLI arguments.
             env_file: Optional additional .env file to merge with defaults.
-            push_images: Whether to push images to a registry (triggers registry validation and login).
+            push_images: Whether to push images to a registry.
             multi_workspace: If True, skip root-level source.json and plugins-list.yaml
                 validation since each workspace manages its own.
         """
@@ -164,6 +186,7 @@ class PluginFactoryConfig:
             registry_password=os.getenv("REGISTRY_PASSWORD"),
             registry_namespace=os.getenv("REGISTRY_NAMESPACE"),
             registry_insecure=os.getenv("REGISTRY_INSECURE", "false").lower() == "true",
+            registry_auth_file=os.getenv("REGISTRY_AUTH_FILE"),
             use_local=args.use_local,
             push_images=push_images,
         )
@@ -172,20 +195,35 @@ class PluginFactoryConfig:
             config._validate_source_json()
             config._validate_plugins_list()
         
-        if push_images:
-            config._buildah_login()
-        
         return config
     
     def _buildah_login(self) -> None:
         """Login to the container registry using buildah.
         
-        Assumes registry fields have already been validated by __post_init__.
+        Auth file takes precedence: if ``REGISTRY_AUTH_FILE`` is set, login is
+        skipped entirely because ``buildah push`` will read credentials from the
+        file automatically.  The file is treated as read-only -- ``buildah login``
+        would write to it, so we never call it when an auth file is configured.
+        
+        When no credentials and no auth file are present, login is also skipped
+        under the assumption that the host is already authenticated (e.g. via a
+        prior ``podman login``).
         
         Raises:
             ExecutionError: If the buildah login command fails.
         """
-        ## TODO: Add support for token logins for ghcr.io registry as well
+        if self.registry_auth_file:
+            self.logger.info(
+                f"Using registry auth file: {self.registry_auth_file} "
+                f"(skipping buildah login)"
+            )
+            return
+        if not self.registry_username or not self.registry_password:
+            self.logger.debug(
+                "No registry credentials provided, skipping buildah login "
+                "(relying on existing host auth)"
+            )
+            return
         try:
             cmd = [
                 "buildah", "login",

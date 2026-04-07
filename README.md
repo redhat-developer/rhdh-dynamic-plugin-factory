@@ -272,19 +272,48 @@ If this file is not provided, the factory will auto-generate it by scanning the 
 
 #### 4. `config/.env` (Optional)
 
-Override default settings to publish to a remote image registry:
+Override default settings to publish to a remote image registry. `REGISTRY_URL` and `REGISTRY_NAMESPACE` are always required when `--push-images` is enabled (they are used to construct image tags).
+
+For authentication, you can either login with username/password or provide a docker/podman `auth.json` file containing your registry credentials.
+
+**Strategy 1: Username/Password (buildah login)**
 
 ```bash
-# Registry configuration (required only with --push-images)
 REGISTRY_URL=quay.io
+REGISTRY_NAMESPACE=your_namespace
 REGISTRY_USERNAME=your_username
 REGISTRY_PASSWORD=your_password
-REGISTRY_NAMESPACE=your_namespace
 REGISTRY_INSECURE=false
-
 ```
 
-Alternatively,  you can pass the `.env` file directly through podman using the `--env-file` argument instead of placing a `.env` file in the config directory:
+**Strategy 2: Auth file (container mount)**
+
+```bash
+REGISTRY_URL=quay.io
+REGISTRY_NAMESPACE=your_namespace
+REGISTRY_AUTH_FILE=/auth.json
+```
+
+Mount your existing auth file into the container and set `REGISTRY_AUTH_FILE`:
+
+```bash
+podman run --rm -it \
+  --device /dev/fuse \
+  -v ~/.config/containers/auth.json:/auth.json:ro,z \
+  -e REGISTRY_AUTH_FILE=/auth.json \
+  -v ./config:/config:z \
+  quay.io/rhdh-community/dynamic-plugins-factory:latest \
+  --workspace-path workspaces/todo \
+  --push-images
+```
+
+The `:ro` (read-only) mount is safe and recommended -- the factory never writes to the auth file. When `REGISTRY_AUTH_FILE` is set, `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` are ignored.
+
+If you have already authenticated on the host (e.g. via `podman login` or `buildah login`), no additional auth configuration is needed. The factory will log a warning that no explicit auth is configured but will proceed. `buildah push` uses the default credential store automatically. This is only applicable when using the factory outside of a container.
+
+---
+
+Alternatively, you can pass the `.env` file directly through podman using the `--env-file` argument instead of placing a `.env` file in the config directory:
 
 ```bash
 podman run --rm -it \
