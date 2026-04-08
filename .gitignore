@@ -2,9 +2,9 @@
 **/__pycache__
 
 # Local Configuration Folders
-config/
-source/
-outputs/
+/config/
+/source/
+/outputs/
 
 # VSCode
 .vscode/
@@ -17,3 +17,6 @@ outputs/
 
 # Logs
 **/*.log
+
+# Local .env files
+**/.env
