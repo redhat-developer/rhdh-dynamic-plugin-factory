@@ -598,7 +598,7 @@ class PluginFactoryConfig:
             def conditional_stderr_log(line: str) -> None:
                 if "Error" in line:
                     self.logger.error(line)
-                if "npm warn" in line:
+                elif "npm warn" in line:
                     self.logger.warning(line)
                 else:
                     self.logger.info(line)
