@@ -16,10 +16,7 @@ import yaml
 from .conftest import (
     FIXTURES_DIR,
     ContainerResult,
-    assert_no_errors_in_logs,
-    find_outputs_for_plugin,
-    get_output_integrity_files,
-    get_output_tgz_files,
+    PluginBuildTests,
     parse_plugins_from_config,
 )
 
@@ -33,7 +30,7 @@ def cli_config_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="class")
-def cli_result(run_factory_container, cli_config_dir) -> ContainerResult:
+def container_result(run_factory_container, cli_config_dir) -> ContainerResult:
     """Run the factory container with all source config via CLI arguments."""
     return run_factory_container(
         cli_config_dir,
@@ -52,18 +49,8 @@ def expected_plugins(cli_config_dir) -> list[str]:
 
 
 @pytest.mark.e2e
-class TestCliOnly:
+class TestCliOnly(PluginBuildTests):
     """Validate the CLI-only flow with no config files on disk."""
-
-    def test_container_exits_successfully(self, cli_result: ContainerResult) -> None:
-        assert cli_result.returncode == 0, (
-            f"Container exited with code {cli_result.returncode}\n"
-            f"Full log: {cli_result.log_file}\n"
-            f"output:\n{cli_result.output[-3000:]}"
-        )
-
-    def test_no_errors_in_logs(self, cli_result: ContainerResult) -> None:
-        assert_no_errors_in_logs(cli_result)
 
     def test_plugins_list_was_generated(self, cli_config_dir) -> None:
         generated = cli_config_dir / "plugins-list.yaml"
@@ -82,54 +69,4 @@ class TestCliOnly:
             "Generated plugins-list.yaml does not match expected.\n"
             f"Generated: {generated}\n"
             f"Expected:  {expected}"
-        )
-
-    def test_all_plugins_produce_tgz(
-        self,
-        cli_result: ContainerResult,
-        expected_plugins: list[str],
-    ) -> None:
-        tgz_files = get_output_tgz_files(cli_result.output_dir)
-
-        for plugin_path in expected_plugins:
-            matches = find_outputs_for_plugin(plugin_path, tgz_files)
-            assert matches, (
-                f"No .tgz output found for plugin '{plugin_path}'\n"
-                f"Available tgz files: {[f.name for f in tgz_files]}"
-            )
-
-    def test_all_plugins_produce_integrity(
-        self,
-        cli_result: ContainerResult,
-        expected_plugins: list[str],
-    ) -> None:
-        integrity_files = get_output_integrity_files(cli_result.output_dir)
-
-        for plugin_path in expected_plugins:
-            matches = find_outputs_for_plugin(plugin_path, integrity_files)
-            assert matches, (
-                f"No .tgz.integrity output found for plugin '{plugin_path}'\n"
-                f"Available integrity files: {[f.name for f in integrity_files]}"
-            )
-
-    def test_output_tarballs_are_nonzero(
-        self, cli_result: ContainerResult
-    ) -> None:
-        tgz_files = get_output_tgz_files(cli_result.output_dir)
-        assert tgz_files, "No .tgz files found in output directory"
-
-        for tgz in tgz_files:
-            assert tgz.stat().st_size > 0, f"Tarball is empty: {tgz.name}"
-
-    def test_output_count_matches_plugins(
-        self,
-        cli_result: ContainerResult,
-        expected_plugins: list[str],
-    ) -> None:
-        tgz_files = get_output_tgz_files(cli_result.output_dir)
-        assert len(tgz_files) >= len(expected_plugins), (
-            f"Expected at least {len(expected_plugins)} tgz outputs "
-            f"(one per plugin), got {len(tgz_files)}.\n"
-            f"Plugins: {expected_plugins}\n"
-            f"Outputs: {[f.name for f in tgz_files]}"
         )

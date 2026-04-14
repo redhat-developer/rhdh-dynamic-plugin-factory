@@ -153,6 +153,82 @@ def assert_no_errors_in_logs(result: ContainerResult) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Base test class
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class PluginBuildTests:
+    """Reusable test suite for single-workspace plugin builds.
+
+    Subclasses must provide two class-scoped fixtures:
+
+    - ``container_result`` -> :class:`ContainerResult`
+    - ``expected_plugins`` -> ``list[str]``
+    """
+
+    def test_container_exits_successfully(self, container_result: ContainerResult) -> None:
+        assert container_result.returncode == 0, (
+            f"Container exited with code {container_result.returncode}\n"
+            f"Full log: {container_result.log_file}\n"
+            f"output:\n{container_result.output[-3000:]}"
+        )
+
+    def test_no_errors_in_logs(self, container_result: ContainerResult) -> None:
+        assert_no_errors_in_logs(container_result)
+
+    def test_all_plugins_produce_tgz(
+        self,
+        container_result: ContainerResult,
+        expected_plugins: list[str],
+    ) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir)
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, tgz_files)
+            assert matches, (
+                f"No .tgz output found for plugin '{plugin_path}'\n"
+                f"Available tgz files: {[f.name for f in tgz_files]}"
+            )
+
+    def test_all_plugins_produce_integrity(
+        self,
+        container_result: ContainerResult,
+        expected_plugins: list[str],
+    ) -> None:
+        integrity_files = get_output_integrity_files(container_result.output_dir)
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, integrity_files)
+            assert matches, (
+                f"No .tgz.integrity output found for plugin '{plugin_path}'\n"
+                f"Available integrity files: {[f.name for f in integrity_files]}"
+            )
+
+    def test_output_tarballs_are_nonzero(
+        self, container_result: ContainerResult
+    ) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir)
+        assert tgz_files, "No .tgz files found in output directory"
+
+        for tgz in tgz_files:
+            assert tgz.stat().st_size > 0, f"Tarball is empty: {tgz.name}"
+
+    def test_output_count_matches_plugins(
+        self,
+        container_result: ContainerResult,
+        expected_plugins: list[str],
+    ) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir)
+        assert len(tgz_files) >= len(expected_plugins), (
+            f"Expected at least {len(expected_plugins)} tgz outputs "
+            f"(one per plugin), got {len(tgz_files)}.\n"
+            f"Plugins: {expected_plugins}\n"
+            f"Outputs: {[f.name for f in tgz_files]}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
