@@ -70,14 +70,26 @@ def parse_plugins_from_config(config_dir: Path) -> list[str]:
 def plugin_path_to_output_pattern(plugin_path: str) -> re.Pattern:
     """Build a regex that matches the npm-pack tarball for *plugin_path*.
 
-    For ``plugins/todo`` the last path component is ``todo`` and the expected
-    tarball looks like ``backstage-community-plugin-todo-0.12.0.tgz`` (or with
-    an optional ``-dynamic`` suffix before the version).  The pattern ensures
-    we do not accidentally match ``todo-backend`` by requiring a digit (the
-    start of the semver version) immediately after the plugin name.
+    For flat paths like ``plugins/todo`` the last component (``todo``) appears
+    directly in the tarball name, e.g. ``backstage-community-plugin-todo-0.12.0.tgz``.
+
+    For nested paths like ``plugins/ecs/frontend`` the last component is a
+    generic role name that may not appear in the tarball at all.  In that case
+    we match on the **parent** directory (``ecs``) and distinguish frontend
+    from backend via the presence/absence of ``-backend`` in the filename.
     """
-    plugin_name = Path(plugin_path).name
-    return re.compile(rf"-{re.escape(plugin_name)}(-dynamic)?-\d.*\.tgz$")
+    parts = Path(plugin_path).parts
+    plugin_name = parts[-1]
+
+    suffix = r"\.tgz(\.integrity)?$"
+
+    if len(parts) >= 2 and plugin_name in ("frontend", "backend"):
+        parent_name = re.escape(parts[-2])
+        if plugin_name == "backend":
+            return re.compile(rf"{parent_name}.*-backend(-dynamic)?-\d.*{suffix}")
+        return re.compile(rf"{parent_name}(?!.*-backend).*(-dynamic)?-\d.*{suffix}")
+
+    return re.compile(rf"-{re.escape(plugin_name)}(-dynamic)?-\d.*{suffix}")
 
 
 def get_output_tgz_files(output_dir: Path) -> list[Path]:
@@ -92,11 +104,14 @@ def get_output_integrity_files(output_dir: Path) -> list[Path]:
 
 def find_outputs_for_plugin(
     plugin_path: str,
-    tgz_files: list[Path],
+    output_files: list[Path],
 ) -> list[Path]:
-    """Return tgz files from *tgz_files* that match *plugin_path*."""
+    """Return files from *output_files* whose names match *plugin_path*.
+
+    Works for both ``.tgz`` and ``.tgz.integrity`` files.
+    """
     pattern = plugin_path_to_output_pattern(plugin_path)
-    return [f for f in tgz_files if pattern.search(f.name)]
+    return [f for f in output_files if pattern.search(f.name)]
 
 
 def _collect_log_errors(output: str) -> list[str]:

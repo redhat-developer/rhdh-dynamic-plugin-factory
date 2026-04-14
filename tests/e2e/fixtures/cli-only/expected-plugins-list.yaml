@@ -1,0 +1,1 @@
+plugins/catalog-backend-module-scaffolder-relation-processor: --embed-package @backstage/plugin-notifications-common --embed-package @backstage/plugin-notifications-node --shared-package !@backstage/plugin-notifications-common --shared-package !@backstage/plugin-notifications-node

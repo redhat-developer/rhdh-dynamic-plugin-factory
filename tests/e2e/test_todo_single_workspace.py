@@ -68,8 +68,7 @@ class TestTodoSingleWorkspace:
         integrity_files = get_output_integrity_files(todo_result.output_dir)
 
         for plugin_path in expected_plugins:
-            plugin_name = plugin_path.split("/")[-1]
-            matches = [f for f in integrity_files if plugin_name in f.name]
+            matches = find_outputs_for_plugin(plugin_path, integrity_files)
             assert matches, (
                 f"No .tgz.integrity output found for plugin '{plugin_path}'\n"
                 f"Available integrity files: {[f.name for f in integrity_files]}"
