@@ -158,6 +158,40 @@ jobs:
     if: needs.check.outputs.should_skip == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Save PR metadata (build skipped)
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          PRIMARY_TAG="pr-${PR_NUMBER}"
+          ALL_TAGS="${PRIMARY_TAG},pr-${PR_NUMBER}-${SHORT_SHA}"
+
+          mkdir -p /tmp/pr-metadata
+          ALL_TAGS_JSON=$(echo "${ALL_TAGS}" | tr ',' '\n' | jq -R . | jq -s .)
+          cat > /tmp/pr-metadata/pr-info.json << EOF
+          {
+            "pr_number": "${PR_NUMBER}",
+            "commit_sha": "${COMMIT_SHA}",
+            "short_sha": "${SHORT_SHA}",
+            "primary_tag": "${PRIMARY_TAG}",
+            "all_tags": ${ALL_TAGS_JSON},
+            "platforms": ["linux/amd64", "linux/arm64"],
+            "build_skipped": true
+          }
+          EOF
+
+          echo "Generated PR metadata (build skipped):"
+          cat /tmp/pr-metadata/pr-info.json
+
+      - name: Upload PR metadata
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pr-metadata
+          path: /tmp/pr-metadata/pr-info.json
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Build Skipped Summary
         env:
           SKIP_REASON: ${{ needs.check.outputs.skip_reason }}
