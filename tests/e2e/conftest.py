@@ -25,7 +25,7 @@ import yaml
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 DEFAULT_LOG_DIR = Path(__file__).parent / "logs"
-CONTAINER_TIMEOUT = 900  # 15 minutes
+CONTAINER_TIMEOUT = 1800  # 30 minutes (allows headroom for parallel runs)
 
 
 @dataclass
