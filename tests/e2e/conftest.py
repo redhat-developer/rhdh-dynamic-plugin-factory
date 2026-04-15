@@ -228,6 +228,103 @@ class PluginBuildTests:
         )
 
 
+@pytest.mark.e2e
+class MultiWorkspaceBuildTests:
+    """Reusable test suite for multi-workspace plugin builds.
+
+    Subclasses must provide:
+
+    - Class attribute ``WORKSPACES`` -> ``list[str]``
+    - Class-scoped fixture ``container_result`` -> :class:`ContainerResult`
+    - Class-scoped fixture ``config_dir`` -> :class:`Path`
+      (directory containing per-workspace subdirectories with configs)
+
+    The ``workspace`` test parameter is automatically parametrized via the
+    :func:`pytest_generate_tests` hook using the ``WORKSPACES`` attribute.
+    """
+
+    WORKSPACES: list[str] = []
+
+    def test_container_exits_successfully(self, container_result: ContainerResult) -> None:
+        assert container_result.returncode == 0, (
+            f"Container exited with code {container_result.returncode}\n"
+            f"Full log: {container_result.log_file}\n"
+            f"output:\n{container_result.output[-3000:]}"
+        )
+
+    def test_no_errors_in_logs(self, container_result: ContainerResult) -> None:
+        assert_no_errors_in_logs(container_result)
+
+    def test_workspace_produces_tgz(
+        self,
+        container_result: ContainerResult,
+        config_dir: Path,
+        workspace: str,
+    ) -> None:
+        expected_plugins = parse_plugins_from_config(config_dir / workspace)
+        tgz_files = get_output_tgz_files(container_result.output_dir / workspace)
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, tgz_files)
+            assert matches, (
+                f"[{workspace}] No .tgz output found for plugin '{plugin_path}'\n"
+                f"Available tgz files: {[f.name for f in tgz_files]}"
+            )
+
+    def test_workspace_produces_integrity(
+        self,
+        container_result: ContainerResult,
+        config_dir: Path,
+        workspace: str,
+    ) -> None:
+        expected_plugins = parse_plugins_from_config(config_dir / workspace)
+        integrity_files = get_output_integrity_files(
+            container_result.output_dir / workspace
+        )
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, integrity_files)
+            assert matches, (
+                f"[{workspace}] No .tgz.integrity output found for plugin "
+                f"'{plugin_path}'\n"
+                f"Available integrity files: {[f.name for f in integrity_files]}"
+            )
+
+    def test_workspace_tarballs_are_nonzero(
+        self,
+        container_result: ContainerResult,
+        workspace: str,
+    ) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir / workspace)
+        assert tgz_files, f"[{workspace}] No .tgz files found in output directory"
+
+        for tgz in tgz_files:
+            assert tgz.stat().st_size > 0, f"[{workspace}] Tarball is empty: {tgz.name}"
+
+    def test_workspace_output_count_matches_plugins(
+        self,
+        container_result: ContainerResult,
+        config_dir: Path,
+        workspace: str,
+    ) -> None:
+        expected_plugins = parse_plugins_from_config(config_dir / workspace)
+        tgz_files = get_output_tgz_files(container_result.output_dir / workspace)
+        assert len(tgz_files) >= len(expected_plugins), (
+            f"[{workspace}] Expected at least {len(expected_plugins)} tgz outputs "
+            f"(one per plugin), got {len(tgz_files)}.\n"
+            f"Plugins: {expected_plugins}\n"
+            f"Outputs: {[f.name for f in tgz_files]}"
+        )
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrize ``workspace`` from the test class's ``WORKSPACES`` attribute."""
+    if "workspace" in metafunc.fixturenames:
+        cls = metafunc.cls
+        if cls and hasattr(cls, "WORKSPACES"):
+            metafunc.parametrize("workspace", cls.WORKSPACES)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
