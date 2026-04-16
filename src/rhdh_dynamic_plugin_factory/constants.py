@@ -29,18 +29,18 @@ SKIP_DIRS: set[str] = {
     "__fixtures__",
 }
 
-HOST_LOCKFILE: Path = (
-    Path(__file__).parent.parent.parent / "resources" / "rhdh" / "yarn.lock"
-)
+HOST_LOCKFILE: Path = Path(__file__).parent.parent.parent / "resources" / "rhdh" / "yarn.lock"
 
-LOCKFILE_BACKSTAGE_RE: re.Pattern = re.compile(
-    r'"(@backstage/[\w.-]+)@npm:'
-)
+LOCKFILE_BACKSTAGE_RE: re.Pattern = re.compile(r'"(@backstage/[\w.-]+)@npm:')
 
-LOCKFILE_PACKAGE_RE: re.Pattern = re.compile(
-    r'"((?:@[\w.-]+/)?[\w.-]+)@npm:'
-)
+LOCKFILE_PACKAGE_RE: re.Pattern = re.compile(r'"((?:@[\w.-]+/)?[\w.-]+)@npm:')
 
-NATIVE_DEP_MARKERS: frozenset[str] = frozenset[str]({
-    "bindings", "prebuild", "nan", "node-pre-gyp", "node-gyp-build",
-})
+NATIVE_DEP_MARKERS: frozenset[str] = frozenset[str](
+    {
+        "bindings",
+        "prebuild",
+        "nan",
+        "node-pre-gyp",
+        "node-gyp-build",
+    }
+)

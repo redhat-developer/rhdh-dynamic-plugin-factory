@@ -56,12 +56,8 @@ class TestMultiWorkspaceAutoGen(MultiWorkspaceBuildTests):
         config_dir: Path,
         workspace: str,
     ) -> None:
-        generated = yaml.safe_load(
-            (config_dir / workspace / "plugins-list.yaml").read_text()
-        )
-        expected = yaml.safe_load(
-            (FIXTURE_DIR / workspace / "expected-plugins-list.yaml").read_text()
-        )
+        generated = yaml.safe_load((config_dir / workspace / "plugins-list.yaml").read_text())
+        expected = yaml.safe_load((FIXTURE_DIR / workspace / "expected-plugins-list.yaml").read_text())
         assert generated == expected, (
             f"[{workspace}] plugins-list.yaml after --generate-build-args "
             f"does not match expected.\n"

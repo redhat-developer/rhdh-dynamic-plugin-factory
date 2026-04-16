@@ -3,79 +3,80 @@ Configuration management for RHDH Plugin Factory.
 """
 
 import argparse
-from logging import Logger
 import os
-from pathlib import Path
-from typing import Dict, Optional, ClassVar
-from dataclasses import dataclass, field
-from dotenv import load_dotenv
-import yaml
 import subprocess
+from dataclasses import dataclass, field
+from logging import Logger
+from pathlib import Path
+from typing import ClassVar, Optional
+
+import yaml
+from dotenv import load_dotenv
 
 from .constants import PLUGIN_LIST_FILE, SOURCE_CONFIG_FILE
-from .exceptions import PluginFactoryError, ConfigurationError, ExecutionError
+from .exceptions import ConfigurationError, ExecutionError, PluginFactoryError
 from .logger import get_logger
-from .utils import run_command_with_streaming, display_export_results
-
-from .source_config import SourceConfig
 from .plugin_list_config import PluginListConfig
+from .source_config import SourceConfig
+from .utils import display_export_results, run_command_with_streaming
+
 
 @dataclass
 class PluginFactoryConfig:
     """Main configuration for the plugin factory."""
-    
+
     # Required fields loaded from default.env file (can be overridden by environment variables)
     rhdh_cli_version: str = field(default="")
-    
+
     repo_path: str = field(default="/source")  # Local path where plugin source code will be stored
     config_dir: str = field(default="/config")
     workspace_path: str = field(default="")  # Relative path from repo_path to the workspace
-    
+
     # Source repository CLI overrides (take precedence over source.json)
     # Used for single workspace case
-    source_repo: Optional[str] = field(default=None)
-    source_ref: Optional[str] = field(default=None)
-    
+    source_repo: str | None = field(default=None)
+    source_ref: str | None = field(default=None)
+
     # Registry configuration (loaded from environment variables, only required for push operations)
-    registry_url: Optional[str] = field(default=None)
-    registry_username: Optional[str] = field(default=None)
-    registry_password: Optional[str] = field(default=None)
-    registry_namespace: Optional[str] = field(default=None)
+    registry_url: str | None = field(default=None)
+    registry_username: str | None = field(default=None)
+    registry_password: str | None = field(default=None)
+    registry_namespace: str | None = field(default=None)
     registry_insecure: bool = field(default=False)
-    registry_auth_file: Optional[str] = field(default=None)
+    registry_auth_file: str | None = field(default=None)
 
     use_local: bool = field(default=False)
     push_images: bool = field(default=False)
 
     logger: ClassVar[Logger] = get_logger("config")
-    
+
     def __post_init__(self) -> None:
         """Validate configuration fields after initialization.
-        
+
         Note: workspace_path is NOT validated here because it may be resolved
         later from source.json. Validation happens in cli._run() after source
         configuration discovery.
-        
+
         Registry fields are NOT validated here. Validation is deferred to
         workspace processing level so that multi-workspace mode can load
         per-workspace .env files before checking credentials.
         """
         if not self.rhdh_cli_version:
             raise ConfigurationError("RHDH_CLI_VERSION must be set (usually loaded from default.env)")
-        
+
         # Validate source arg constraints: --source-ref requires --source-repo
         if self.source_ref and not self.source_repo:
             raise ConfigurationError("--source-ref requires --source-repo to be provided")
-    
+
     def _validate_registry_fields(self) -> None:
         """Validate registry fields required for pushing images.
-        
+
         REGISTRY_URL and REGISTRY_NAMESPACE are hard requirements (needed to
         construct image tags).  Authentication is validated as a warning only:
         if neither username/password nor REGISTRY_AUTH_FILE is configured, a
         warning is logged but execution continues -- the user may be relying
         on pre-existing host auth (e.g. a prior ``podman login``).
-        
+
         Raises:
             ConfigurationError: If REGISTRY_URL or REGISTRY_NAMESPACE is missing.
         """
@@ -92,13 +93,13 @@ class PluginFactoryConfig:
                 "(e.g. a prior 'podman login'). If push fails, provide "
                 "REGISTRY_USERNAME/REGISTRY_PASSWORD or set REGISTRY_AUTH_FILE."
             )
-    
+
     def refresh_registry_config(self) -> None:
         """Re-read registry fields from os.environ and re-login if credentials changed.
-        
+
         Called per workspace in multi-workspace mode after loading workspace-specific
         .env files so that each workspace can target a different registry.
-        
+
         Raises:
             ConfigurationError: If push_images is enabled and required registry fields are missing.
             ExecutionError: If buildah login fails after credential change.
@@ -109,7 +110,7 @@ class PluginFactoryConfig:
         new_namespace = os.getenv("REGISTRY_NAMESPACE")
         new_insecure = os.getenv("REGISTRY_INSECURE", "false").lower() == "true"
         new_auth_file = os.getenv("REGISTRY_AUTH_FILE")
-        
+
         config_changed = (
             new_url != self.registry_url
             or new_username != self.registry_username
@@ -117,30 +118,35 @@ class PluginFactoryConfig:
             or new_insecure != self.registry_insecure
             or new_auth_file != self.registry_auth_file
         )
-        
+
         self.registry_url = new_url
         self.registry_username = new_username
         self.registry_password = new_password
         self.registry_namespace = new_namespace
         self.registry_insecure = new_insecure
         self.registry_auth_file = new_auth_file
-        
+
         if self.push_images and config_changed:
             self._validate_registry_fields()
             self._buildah_login()
 
     @classmethod
-    def load_from_env(cls, args: argparse.Namespace, env_file: Optional[Path] = None,
-                      push_images: bool = False, multi_workspace: bool = False) -> "PluginFactoryConfig":
+    def load_from_env(
+        cls,
+        args: argparse.Namespace,
+        env_file: Path | None = None,
+        push_images: bool = False,
+        multi_workspace: bool = False,
+    ) -> "PluginFactoryConfig":
         """Load configuration from environment variables and .env files.
-        
+
         Loads default.env first, then optionally loads additional env file to override defaults or provide additional values.
         Environment variables take precedence over .env file values.
-        
+
         Registry validation and login are NOT performed here.  They are
         deferred to workspace processing level so that per-workspace ``.env``
         files are loaded before credentials are checked.
-        
+
         Args:
             args: Parsed CLI arguments.
             env_file: Optional additional .env file to merge with defaults.
@@ -149,31 +155,31 @@ class PluginFactoryConfig:
                 validation since each workspace manages its own.
         """
         default_env_path = Path(__file__).parent.parent.parent / "default.env"
-        
-        cls.logger.debug(f'[bold blue]Loading environment variables from {default_env_path}[/bold blue]')
+
+        cls.logger.debug(f"[bold blue]Loading environment variables from {default_env_path}[/bold blue]")
 
         if default_env_path.exists():
             load_dotenv(default_env_path)
-            cls.logger.debug(f'[green]Loaded {default_env_path}[/green]')
-            
+            cls.logger.debug(f"[green]Loaded {default_env_path}[/green]")
+
         if env_file and env_file.exists():
             load_dotenv(env_file, override=True)
-            cls.logger.debug(f'[green]Loaded {env_file}[/green]')
+            cls.logger.debug(f"[green]Loaded {env_file}[/green]")
 
-        cls.logger.debug('[bold blue]Loading configuration from environment variables and CLI arguments[/bold blue]')
-        
+        cls.logger.debug("[bold blue]Loading configuration from environment variables and CLI arguments[/bold blue]")
+
         config_dir = args.config_dir
         repo_path = args.repo_path
-        
+
         # Ensure required directories exist before constructing config
         for dir_path in [config_dir, repo_path]:
             os.makedirs(dir_path, exist_ok=True)
-        
-        workspace_path = getattr(args, 'workspace_path', None)
-        
-        source_repo = getattr(args, 'source_repo', None)
-        source_ref = getattr(args, 'source_ref', None)
-        
+
+        workspace_path = getattr(args, "workspace_path", None)
+
+        source_repo = getattr(args, "source_repo", None)
+        source_ref = getattr(args, "source_ref", None)
+
         config = cls(
             rhdh_cli_version=os.getenv("RHDH_CLI_VERSION", ""),
             repo_path=repo_path,
@@ -190,58 +196,52 @@ class PluginFactoryConfig:
             use_local=args.use_local,
             push_images=push_images,
         )
-        
+
         if not multi_workspace:
             config._validate_source_json()
             config._validate_plugins_list()
-        
+
         return config
-    
+
     def _buildah_login(self) -> None:
         """Login to the container registry using buildah.
-        
+
         Auth file takes precedence: if ``REGISTRY_AUTH_FILE`` is set, login is
         skipped entirely because ``buildah push`` will read credentials from the
         file automatically.  The file is treated as read-only -- ``buildah login``
         would write to it, so we never call it when an auth file is configured.
-        
+
         When no credentials and no auth file are present, login is also skipped
         under the assumption that the host is already authenticated (e.g. via a
         prior ``podman login``).
-        
+
         Raises:
             ExecutionError: If the buildah login command fails.
         """
         if self.registry_auth_file:
-            self.logger.info(
-                f"Using registry auth file: {self.registry_auth_file} "
-                f"(skipping buildah login)"
-            )
+            self.logger.info(f"Using registry auth file: {self.registry_auth_file} (skipping buildah login)")
             return
         if not self.registry_username or not self.registry_password:
             self.logger.debug(
-                "No registry credentials provided, skipping buildah login "
-                "(relying on existing host auth)"
+                "No registry credentials provided, skipping buildah login (relying on existing host auth)"
             )
             return
         try:
             cmd = [
-                "buildah", "login",
-                "--username", str(self.registry_username),
-                "--password", str(self.registry_password)
+                "buildah",
+                "login",
+                "--username",
+                str(self.registry_username),
+                "--password",
+                str(self.registry_password),
             ]
-            
+
             if self.registry_insecure:
                 cmd.extend(["--tls-verify=false"])
-                
+
             cmd.append(str(self.registry_url))
-            
-            subprocess.run(
-                cmd,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+
+            subprocess.run(cmd, check=True, capture_output=True)
             self.logger.info(f"Logged in to registry {self.registry_url} with buildah.")
         except subprocess.CalledProcessError as e:
             raise ExecutionError(
@@ -249,19 +249,19 @@ class PluginFactoryConfig:
                 step="buildah login",
                 returncode=e.returncode,
             ) from e
-    
+
     def _validate_source_json(self) -> None:
         """Validate source.json file existence and repo_path state.
-        
+
         Skips validation when --source-repo CLI arg is provided, since
         CLI args fully replace source.json.
         """
         if self.source_repo:
             self.logger.debug(f"Using --source-repo CLI argument, skipping {SOURCE_CONFIG_FILE} validation")
             return
-        
+
         source_file = os.path.join(self.config_dir, SOURCE_CONFIG_FILE)
-        
+
         if not os.path.exists(source_file):
             if not os.path.exists(self.repo_path) or not os.listdir(self.repo_path):
                 raise ConfigurationError(
@@ -275,23 +275,23 @@ class PluginFactoryConfig:
                 )
         else:
             self.logger.debug(f"Using source configuration from: {source_file}")
-    
+
     def _validate_plugins_list(self) -> None:
         """Validate plugins-list.yaml file existence."""
         plugins_file = os.path.join(self.config_dir, PLUGIN_LIST_FILE)
-        
+
         if not os.path.exists(plugins_file):
             self.logger.warning(
                 f"{PLUGIN_LIST_FILE} not found at {plugins_file}. Will attempt to auto-generate after repository is available."
             )
         else:
             self.logger.debug(f"Using {PLUGIN_LIST_FILE} from: {plugins_file}")
-    
+
     def discover_plugins_list(
         self,
-        config_dir: Optional[str] = None,
-        repo_path: Optional[str] = None,
-        workspace_path: Optional[str] = None,
+        config_dir: str | None = None,
+        repo_path: str | None = None,
+        workspace_path: str | None = None,
     ) -> bool:
         """Phase 1: Discover plugins and generate plugins-list.yaml if missing.
 
@@ -322,8 +322,7 @@ class PluginFactoryConfig:
 
         if os.path.exists(plugins_file):
             self.logger.debug(
-                f"[green]{PLUGIN_LIST_FILE} already exists at {plugins_file}. "
-                f"Skipping discovery.[/green]"
+                f"[green]{PLUGIN_LIST_FILE} already exists at {plugins_file}. Skipping discovery.[/green]"
             )
             return False
 
@@ -340,7 +339,7 @@ class PluginFactoryConfig:
             plugin_cfg = PluginListConfig.create_default(workspace_path=Path(workspace_full_path))
             plugin_cfg.to_file(Path(plugins_file))
 
-            plugins: Dict[str, str] = plugin_cfg.get_plugins()
+            plugins: dict[str, str] = plugin_cfg.get_plugins()
             if plugins:
                 self.logger.info(f"Generated {PLUGIN_LIST_FILE} with {len(plugins)} plugin(s)")
                 for plugin_path in plugins:
@@ -356,9 +355,9 @@ class PluginFactoryConfig:
 
     def populate_plugins_build_args(
         self,
-        config_dir: Optional[str] = None,
-        repo_path: Optional[str] = None,
-        workspace_path: Optional[str] = None,
+        config_dir: str | None = None,
+        repo_path: str | None = None,
+        workspace_path: str | None = None,
     ) -> None:
         """Compute build arguments for an existing plugins-list.yaml.
 
@@ -382,8 +381,7 @@ class PluginFactoryConfig:
 
         if not os.path.exists(plugins_file):
             raise PluginFactoryError(
-                f"{PLUGIN_LIST_FILE} not found at {plugins_file}. "
-                f"Cannot compute build arguments without a plugin list."
+                f"{PLUGIN_LIST_FILE} not found at {plugins_file}. Cannot compute build arguments without a plugin list."
             )
 
         self.logger.info(f"[bold blue]Computing build arguments for {plugins_file}[/bold blue]")
@@ -399,10 +397,8 @@ class PluginFactoryConfig:
         except PluginFactoryError:
             raise
         except Exception as e:
-            raise PluginFactoryError(
-                f"Failed to compute build args for {plugins_file}: {e}"
-            ) from e
-    
+            raise PluginFactoryError(f"Failed to compute build args for {plugins_file}: {e}") from e
+
     def discover_source_config(self) -> Optional["SourceConfig"]:
         """Discovers and loads source configuration.
 
@@ -425,7 +421,7 @@ class PluginFactoryConfig:
             )
             self.logger.debug(f"Using source config from CLI: {source_config}")
             return source_config
-        
+
         source_file = os.path.join(self.config_dir, SOURCE_CONFIG_FILE)
 
         if os.path.exists(source_file) and not self.use_local:
@@ -441,40 +437,44 @@ class PluginFactoryConfig:
                 f"or ensure locally stored plugin source code exists at {self.repo_path}"
             )
         return None
-    
-    
+
     def setup_config_directory(self) -> Optional["SourceConfig"]:
         """Setup and validate configuration directory structure."""
         self.logger.info("[bold blue]Setting up configuration directory[/bold blue]")
-        
+
         os.makedirs(self.config_dir, exist_ok=True)
-        
+
         env_file = os.path.join(self.config_dir, ".env")
         if os.path.exists(env_file):
             load_dotenv(env_file, override=True)
             self.logger.debug(f"Loaded .env file: {env_file}")
-        
-        source_config: Optional["SourceConfig"] = self.discover_source_config()
+
+        source_config: SourceConfig | None = self.discover_source_config()
         if source_config:
             self.logger.info("Found source configuration")
             self.logger.info(f"  Repository: {source_config.repo}")
             self.logger.info(f"  Reference: {source_config.repo_ref}")
-        
+
         plugins_list_file = os.path.join(self.config_dir, PLUGIN_LIST_FILE)
-        
+
         if os.path.exists(plugins_list_file):
             self.logger.info(f"Using plugin list file: {plugins_list_file}")
-            with open(plugins_list_file, 'r') as f:
+            with open(plugins_list_file) as f:
                 plugins_yaml = yaml.dump(yaml.safe_load(f), indent=2)
-            indented_plugins_yaml = "\n".join("  " + line if line.strip() != "" else line for line in plugins_yaml.splitlines())
+            indented_plugins_yaml = "\n".join(
+                "  " + line if line.strip() != "" else line for line in plugins_yaml.splitlines()
+            )
             self.logger.info(f"Plugins:\n{indented_plugins_yaml}")
         else:
             self.logger.warning(f"{plugins_list_file} not found, will auto-generate after repository is available")
         return source_config
-    
-    def apply_patches_and_overlays(self, config_dir: Optional[str] = None,
-                                    repo_path: Optional[str] = None,
-                                    workspace_path: Optional[str] = None) -> None:
+
+    def apply_patches_and_overlays(
+        self,
+        config_dir: str | None = None,
+        repo_path: str | None = None,
+        workspace_path: str | None = None,
+    ) -> None:
         """Apply patches and overlays using override-sources.sh script.
 
         Args:
@@ -494,10 +494,7 @@ class PluginFactoryConfig:
         STEP_NAME = "apply patches and overlays"
 
         if not script_path.exists():
-            raise ExecutionError(
-                f"Script not found: {script_path}",
-                step=STEP_NAME
-            )
+            raise ExecutionError(f"Script not found: {script_path}", step=STEP_NAME)
 
         repo_root = os.path.abspath(repo_path)
         workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
@@ -511,10 +508,7 @@ class PluginFactoryConfig:
 
         try:
             returncode = run_command_with_streaming(
-                cmd,
-                self.logger,
-                cwd=Path(repo_root),
-                stderr_log_func=self.logger.error
+                cmd, self.logger, cwd=Path(repo_root), stderr_log_func=self.logger.error
             )
 
             if returncode == 0:
@@ -523,19 +517,20 @@ class PluginFactoryConfig:
                 raise ExecutionError(
                     f"Patches/overlays failed with exit code {returncode}",
                     step=STEP_NAME,
-                    returncode=returncode
+                    returncode=returncode,
                 )
         except ExecutionError:
             raise
         except Exception as e:
-            raise ExecutionError(
-                f"Failed to run patch script: {e}",
-                step=STEP_NAME
-            ) from e
-    
-    def export_plugins(self, output_dir: str, config_dir: Optional[str] = None,
-                        repo_path: Optional[str] = None,
-                        workspace_path: Optional[str] = None) -> None:
+            raise ExecutionError(f"Failed to run patch script: {e}", step=STEP_NAME) from e
+
+    def export_plugins(
+        self,
+        output_dir: str,
+        config_dir: str | None = None,
+        repo_path: str | None = None,
+        workspace_path: str | None = None,
+    ) -> None:
         """Export plugins using export-workspace.sh script.
 
         Args:
@@ -551,19 +546,16 @@ class PluginFactoryConfig:
         config_dir = config_dir or self.config_dir
         repo_path = repo_path or self.repo_path
         workspace_path = workspace_path or self.workspace_path
-        
+
         script_dir = Path(__file__).parent.parent.parent / "scripts"
         script_path = script_dir / "export-workspace.sh"
         STEP_NAME = "export plugins"
-        
+
         if not script_path.exists():
-            raise ExecutionError(
-                f"Script not found: {script_path}",
-                step=STEP_NAME
-            )
-        
+            raise ExecutionError(f"Script not found: {script_path}", step=STEP_NAME)
+
         plugins_list_file = os.path.join(config_dir, PLUGIN_LIST_FILE)
-        
+
         if not os.path.exists(plugins_list_file):
             raise ConfigurationError("No plugins file found")
 
@@ -571,30 +563,33 @@ class PluginFactoryConfig:
         default_env_file = Path(__file__).parent.parent.parent / "default.env"
         load_dotenv(default_env_file)
         env = dict[str, str](os.environ)
-        
+
         if os.path.exists(config_env_file):
             self.logger.debug(f"Loading script configuration from: {config_env_file}")
             load_dotenv(config_env_file, override=True)
             env = dict[str, str](os.environ)
-        
+
         os.makedirs(output_dir, exist_ok=True)
         env["INPUTS_DESTINATION"] = output_dir
-        env.update({
-            "INPUTS_SCALPRUM_CONFIG_FILE_NAME": "scalprum-config.json",
-            "INPUTS_SOURCE_OVERLAY_FOLDER_NAME": "overlay",
-            "INPUTS_SOURCE_PATCH_FILE_NAME": "patch",
-            "INPUTS_APP_CONFIG_FILE_NAME": "app-config.dynamic.yaml",
-            "INPUTS_PLUGINS_FILE": os.path.abspath(plugins_list_file),
-            "INPUTS_CLI_PACKAGE": "@red-hat-developer-hub/cli",
-            "INPUTS_PUSH_CONTAINER_IMAGE": "true" if self.push_images else "false",
-            "INPUTS_JANUS_CLI_VERSION": self.rhdh_cli_version,
-            "INPUTS_IMAGE_REPOSITORY_PREFIX": f"{self.registry_url or 'localhost'}/{self.registry_namespace or 'default'}",
-            "INPUTS_DESTINATION": os.path.abspath(output_dir),
-            "INPUTS_CONTAINER_BUILD_TOOL": "buildah",
-        })
-        
+        env.update(
+            {
+                "INPUTS_SCALPRUM_CONFIG_FILE_NAME": "scalprum-config.json",
+                "INPUTS_SOURCE_OVERLAY_FOLDER_NAME": "overlay",
+                "INPUTS_SOURCE_PATCH_FILE_NAME": "patch",
+                "INPUTS_APP_CONFIG_FILE_NAME": "app-config.dynamic.yaml",
+                "INPUTS_PLUGINS_FILE": os.path.abspath(plugins_list_file),
+                "INPUTS_CLI_PACKAGE": "@red-hat-developer-hub/cli",
+                "INPUTS_PUSH_CONTAINER_IMAGE": "true" if self.push_images else "false",
+                "INPUTS_JANUS_CLI_VERSION": self.rhdh_cli_version,
+                "INPUTS_IMAGE_REPOSITORY_PREFIX": f"{self.registry_url or 'localhost'}/{self.registry_namespace or 'default'}",
+                "INPUTS_DESTINATION": os.path.abspath(output_dir),
+                "INPUTS_CONTAINER_BUILD_TOOL": "buildah",
+            }
+        )
+
         workspace_full_path = os.path.abspath(os.path.join(repo_path, workspace_path))
         try:
+
             def conditional_stderr_log(line: str) -> None:
                 if "Error" in line:
                     self.logger.error(line)
@@ -602,24 +597,24 @@ class PluginFactoryConfig:
                     self.logger.warning(line)
                 else:
                     self.logger.info(line)
-            
+
             returncode = run_command_with_streaming(
                 [str(script_path.absolute())],
                 self.logger,
                 cwd=Path(workspace_full_path),
                 env=env,
-                stderr_log_func=conditional_stderr_log
+                stderr_log_func=conditional_stderr_log,
             )
-            
+
             if returncode != 0:
                 raise ExecutionError(
                     f"Plugin export script failed with exit code {returncode}",
                     step=STEP_NAME,
-                    returncode=returncode
+                    returncode=returncode,
                 )
-            
+
             has_failures = display_export_results(Path(workspace_full_path), self.logger)
-            
+
             if has_failures:
                 raise ExecutionError(
                     "Plugin export completed with failures",

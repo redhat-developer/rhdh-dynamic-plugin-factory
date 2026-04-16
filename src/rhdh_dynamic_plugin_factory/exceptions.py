@@ -2,6 +2,7 @@
 Custom exceptions for RHDH Plugin Factory.
 """
 
+
 class PluginFactoryError(Exception):
     """Base exception for all plugin factory errors.
 
@@ -17,6 +18,7 @@ class PluginFactoryError(Exception):
         super().__init__(reason)
         self.reason = reason
 
+
 class ConfigurationError(PluginFactoryError):
     """User-facing configuration validation errors.
 
@@ -27,6 +29,7 @@ class ConfigurationError(PluginFactoryError):
     Attributes:
         reason: A human-readable description of the configuration problem.
     """
+
 
 class ExecutionError(PluginFactoryError):
     """External command or script execution failure.

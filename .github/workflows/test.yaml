@@ -45,6 +45,17 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements.dev.txt
 
+      - name: Lint with ruff
+        if: steps.skip_check.outputs.should_skip != 'true'
+        run: |
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+
+      - name: Type check with mypy
+        if: steps.skip_check.outputs.should_skip != 'true'
+        run: |
+          mypy
+
       - name: Run pytest
         if: steps.skip_check.outputs.should_skip != 'true'
         run: |

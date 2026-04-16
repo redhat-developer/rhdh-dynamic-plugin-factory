@@ -5,10 +5,10 @@ Shared pytest fixtures for RHDH Dynamic Plugin Factory tests.
 import argparse
 import json
 from pathlib import Path
-import pytest
 from unittest.mock import MagicMock
-from dotenv import dotenv_values
 
+import pytest
+from dotenv import dotenv_values
 from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
 from src.rhdh_dynamic_plugin_factory.plugin_list_config import PluginListConfig
 
@@ -45,7 +45,7 @@ def mock_logger():
 @pytest.fixture
 def mock_args(tmp_path):
     """Create mock argparse.Namespace with default valid arguments.
-    
+
     Uses Path objects for config_dir and repo_path to match argparse type=Path behavior.
     """
     args = argparse.Namespace(
@@ -65,18 +65,18 @@ def mock_args(tmp_path):
 @pytest.fixture
 def valid_default_env(monkeypatch):
     """Load environment variables from the real default.env file."""
-    
+
     # Load the real default.env file from project root since its path is hardcoded
     default_env_path = Path(__file__).parent.parent / "default.env"
-    
+
     if default_env_path.exists():
         env_vars = dotenv_values(default_env_path)
-        
+
         # Set environment variables from the file
         for key, value in env_vars.items():
             if value:  # Only set if value is not None or empty
                 monkeypatch.setenv(key, value)
-    
+
     return default_env_path
 
 
@@ -98,13 +98,13 @@ def valid_plugins_list_yaml(tmp_path: Path):
     plugins_content = """plugins/ecs/frontend:
 plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common --embed-package @aws/aws-core-plugin-for-backstage-node
 """
-    
+
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    
+
     plugins_file = config_dir / "plugins-list.yaml"
     plugins_file.write_text(plugins_content)
-    
+
     return plugins_file
 
 
@@ -113,25 +113,23 @@ def temp_workspace(tmp_path: Path):
     """Create a temporary workspace directory with realistic structure."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    
+
     # Create some basic workspace structure
     plugins_dir = workspace / "plugins"
     plugins_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create a sample plugin directory
     sample_plugin = plugins_dir / "sample-plugin"
     sample_plugin.mkdir(parents=True, exist_ok=True)
-    
+
     # Create a package.json for the sample plugin
     package_json = {
         "name": "@test/sample-plugin",
         "version": "1.0.0",
-        "backstage": {
-            "role": "backend-plugin"
-        }
+        "backstage": {"role": "backend-plugin"},
     }
     (sample_plugin / "package.json").write_text(json.dumps(package_json, indent=2))
-    
+
     return workspace
 
 
@@ -139,36 +137,36 @@ def temp_workspace(tmp_path: Path):
 def setup_test_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
     Set up a complete test environment with all required files and environment variables.
-    
+
     This fixture combines multiple setups to provide a fully configured test environment.
     """
     # Create directory structure
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    
+
     source_dir = tmp_path / "source"
     source_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create source.json
     _write_source_json(
         config_dir,
         "https://github.com/awslabs/backstage-plugins-for-aws",
         "78df9399a81cfd95265cab53815f54210b1d7f50",
     )
-    
+
     # Create plugins-list.yaml
     plugins_content = """plugins/ecs/frontend:
 plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common
 """
     (config_dir / "plugins-list.yaml").write_text(plugins_content)
-    
+
     # Set common environment variables
     monkeypatch.setenv("RHDH_CLI_VERSION", "1.7.2")
-    
+
     return {
         "config_dir": str(config_dir),
         "source_dir": str(source_dir),
-        "tmp_path": tmp_path
+        "tmp_path": tmp_path,
     }
 
 
@@ -185,22 +183,23 @@ def clean_env(monkeypatch: pytest.MonkeyPatch):
         "REGISTRY_INSECURE",
         "REGISTRY_AUTH_FILE",
     ]
-    
+
     for var in env_vars:
         monkeypatch.delenv(var, raising=False)
-    
+
     return monkeypatch
 
 
 @pytest.fixture
 def make_config(setup_test_env):
     """Factory fixture to create PluginFactoryConfig with sensible defaults.
-    
+
     Usage:
         config = make_config()  # All defaults
         config = make_config(registry_url="quay.io")  # With override
         config = make_config(registry_url=None)  # Explicitly set to None
     """
+
     def _make_config(**overrides):
         defaults = {
             "config_dir": setup_test_env["config_dir"],
@@ -210,5 +209,5 @@ def make_config(setup_test_env):
         }
         defaults.update(overrides)
         return PluginFactoryConfig(**defaults)
-    return _make_config
 
+    return _make_config

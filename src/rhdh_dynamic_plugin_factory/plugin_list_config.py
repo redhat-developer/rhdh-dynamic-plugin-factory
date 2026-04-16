@@ -4,12 +4,13 @@ Plugin list configuration for RHDH Plugin Factory.
 Handles loading, saving, and build-argument computation for plugins-list.yaml files.
 """
 
+import json
+import re
 from logging import Logger
 from pathlib import Path
-import re
-from typing import Dict, Optional, ClassVar
+from typing import ClassVar
+
 import yaml
-import json
 
 from . import constants
 from .logger import get_logger
@@ -21,31 +22,31 @@ class PluginListConfig:
     logger: ClassVar[Logger] = get_logger("plugin_list")
     _host_packages_cache: ClassVar[set[str] | None] = None
 
-    def __init__(self, plugins: Dict[str, str]):
+    def __init__(self, plugins: dict[str, str]):
         """
         Initialize plugin list configuration.
-        
+
         Args:
             plugins: Dictionary mapping plugin paths to build arguments
         """
         self.plugins = plugins
-    
+
     @classmethod
     def from_file(cls, plugin_list_file: Path) -> "PluginListConfig":
         """Load plugin list from YAML file."""
-        
-        with open(plugin_list_file, 'r') as f:
+
+        with open(plugin_list_file) as f:
             data = yaml.safe_load(f) or {}
-            
+
         plugins = {}
         for key, value in data.items():
             if value is None:
                 plugins[key] = ""
             else:
                 plugins[key] = str(value)
-        
+
         return cls(plugins)
-    
+
     def to_file(self, plugin_list_file: Path) -> None:
         """Save plugin list to YAML file.
 
@@ -55,19 +56,19 @@ class PluginListConfig:
         Args:
             plugin_list_file: Destination path for the YAML file.
         """
-        with open(plugin_list_file, 'w') as f:
+        with open(plugin_list_file, "w") as f:
             for path, args in self.plugins.items():
                 if args:
                     f.write(f"{path}: {args}\n")
                 else:
                     f.write(f"{path}:\n")
-    
-    def get_plugins(self) -> Dict[str, str]:
+
+    def get_plugins(self) -> dict[str, str]:
         return self.plugins.copy()
-    
+
     def add_plugin(self, plugin_path: str, build_args: str = "") -> None:
         self.plugins[plugin_path] = build_args
-    
+
     def remove_plugin(self, plugin_path: str) -> None:
         self.plugins.pop(plugin_path, None)
 
@@ -95,8 +96,7 @@ class PluginListConfig:
             pkg_json_path = workspace_path / plugin_dir / constants.PKG_JSON
             if not pkg_json_path.is_file():
                 self.logger.warning(
-                    f"Plugin package.json not found in workspace: {plugin_dir} "
-                    f"(expected at {pkg_json_path})"
+                    f"Plugin package.json not found in workspace: {plugin_dir} (expected at {pkg_json_path})"
                 )
                 self.plugins[plugin_dir] = ""
                 continue
@@ -111,7 +111,9 @@ class PluginListConfig:
                 continue
 
             self.plugins[plugin_dir] = self._compute_plugin_build_args(
-                workspace_path, plugin_dir, pkg_json_path, host_packages,
+                workspace_path,
+                pkg_json_path,
+                host_packages,
             )
 
         self._log_build_args_diff(original, self.plugins)
@@ -119,7 +121,9 @@ class PluginListConfig:
 
     @classmethod
     def _log_build_args_diff(
-        cls, before: Dict[str, str], after: Dict[str, str],
+        cls,
+        before: dict[str, str],
+        after: dict[str, str],
     ) -> None:
         """Log a before/after comparison for plugins whose build args changed."""
         changed: list[str] = []
@@ -134,10 +138,7 @@ class PluginListConfig:
                 unchanged.append(plugin_dir)
 
         if changed:
-            cls.logger.info(
-                f"Build args updated for {len(changed)} of "
-                f"{len(after)} plugin(s):"
-            )
+            cls.logger.info(f"Build args updated for {len(changed)} of {len(after)} plugin(s):")
             for plugin_dir in changed:
                 old = before.get(plugin_dir, "")
                 new = after[plugin_dir]
@@ -146,19 +147,14 @@ class PluginListConfig:
                 cls.logger.info(f"    after:  {new or '(empty)'}")
 
         if unchanged:
-            cls.logger.info(
-                f"Build args unchanged for {len(unchanged)} plugin(s):"
-            )
+            cls.logger.info(f"Build args unchanged for {len(unchanged)} plugin(s):")
             for plugin_dir in unchanged:
-                cls.logger.info(
-                    f"  {plugin_dir}: {after[plugin_dir] or '(empty)'}"
-                )
+                cls.logger.info(f"  {plugin_dir}: {after[plugin_dir] or '(empty)'}")
 
     @classmethod
     def _compute_plugin_build_args(
         cls,
         workspace_path: Path,
-        plugin_dir: str,
         pkg_json_path: Path,
         host_packages: set[str],
     ) -> str:
@@ -174,7 +170,9 @@ class PluginListConfig:
 
         if role in constants.BACKEND_ROLES:
             return cls._compute_backend_build_args(
-                workspace_path, plugin_dir, pkg_json_path, host_packages,
+                workspace_path,
+                pkg_json_path,
+                host_packages,
             )
         return ""
 
@@ -195,7 +193,7 @@ class PluginListConfig:
         Returns:
             A :class:`PluginListConfig` with discovered plugin paths (build args empty).
         """
-        plugins: Dict[str, str] = {}
+        plugins: dict[str, str] = {}
 
         root_pkg_json = workspace_path / constants.PKG_JSON
         if root_pkg_json.is_file():
@@ -233,7 +231,7 @@ class PluginListConfig:
         return results
 
     @classmethod
-    def _read_backstage_role(cls, pkg_json_path: Path) -> Optional[str]:
+    def _read_backstage_role(cls, pkg_json_path: Path) -> str | None:
         """Read the ``backstage.role`` field from a package.json file.
 
         Returns:
@@ -241,8 +239,9 @@ class PluginListConfig:
         """
         try:
             data = json.loads(pkg_json_path.read_text(encoding="utf-8"))
-            cls.logger.debug(f"Read backstage role from {pkg_json_path}: {data.get('backstage', {}).get('role')}")
-            return data.get("backstage", {}).get("role")
+            role = data.get("backstage", {}).get("role")
+            cls.logger.debug(f"Read backstage role from {pkg_json_path}: {role}")
+            return str(role) if role is not None else None
         except (json.JSONDecodeError, OSError) as e:
             cls.logger.warning(f"Failed to read {pkg_json_path}: {e}")
             return None
@@ -313,9 +312,7 @@ class PluginListConfig:
         return {f"{base}-common", f"{base}-node"}
 
     @classmethod
-    def _resolve_node_module_package_json(
-        cls, workspace_path: Path, dep_name: str
-    ) -> Optional[Path]:
+    def _resolve_node_module_package_json(cls, workspace_path: Path, dep_name: str) -> Path | None:
         """Locate a dependency's ``package.json`` in the workspace root ``node_modules``.
 
         Yarn workspaces hoist all packages to the workspace root, so only that
@@ -445,7 +442,6 @@ class PluginListConfig:
     def _compute_backend_build_args(
         cls,
         workspace_path: Path,
-        plugin_dir: str,
         pkg_json_path: Path,
         host_packages: set[str],
     ) -> str:
@@ -463,7 +459,6 @@ class PluginListConfig:
 
         Args:
             workspace_path: Absolute workspace root.
-            plugin_dir: Plugin directory relative to *workspace_path*.
             pkg_json_path: Path to the plugin's ``package.json``.
             host_packages: All package names present in the host lockfile.
 
@@ -499,12 +494,11 @@ class PluginListConfig:
             backstage_deps = cls._gather_backstage_deps(workspace_path, dep_name)
             if backstage_deps:
                 embed_packages.add(dep_name)
-                unshare_packages.update(
-                    bs for bs in backstage_deps if bs not in host_packages
-                )
+                unshare_packages.update(bs for bs in backstage_deps if bs not in host_packages)
 
         suppress_native = cls._gather_native_modules(
-            workspace_path, private_deps | embed_packages | siblings,
+            workspace_path,
+            private_deps | embed_packages | siblings,
         )
 
         parts = [f"--embed-package {pkg}" for pkg in sorted(embed_packages)]

@@ -17,9 +17,7 @@ class TestCollectBuildLogs:
 
         collect_build_logs(mock_logger, tmp_dir=tmp_path)
 
-        mock_logger.warning.assert_any_call(
-            f"[yellow]Build log: {log_file}[/yellow]"
-        )
+        mock_logger.warning.assert_any_call(f"[yellow]Build log: {log_file}[/yellow]")
         mock_logger.warning.assert_any_call("  gyp ERR! build error")
         mock_logger.warning.assert_any_call("  gyp ERR! not ok")
 
@@ -52,9 +50,7 @@ class TestCollectBuildLogs:
 
         collect_build_logs(mock_logger, tmp_dir=tmp_path)
 
-        mock_logger.warning.assert_any_call(
-            f"[yellow]Empty build log: {log_file}[/yellow]"
-        )
+        mock_logger.warning.assert_any_call(f"[yellow]Empty build log: {log_file}[/yellow]")
 
     def test_handles_unreadable_build_log(self, tmp_path, mock_logger):
         """Test that unreadable files are reported but don't cause a crash."""
@@ -81,9 +77,7 @@ class TestCollectBuildLogs:
 
         collect_build_logs(mock_logger, tmp_dir=tmp_path)
 
-        mock_logger.warning.assert_any_call(
-            f"[yellow]Build log: {log_file}[/yellow]"
-        )
+        mock_logger.warning.assert_any_call(f"[yellow]Build log: {log_file}[/yellow]")
         mock_logger.warning.assert_any_call("  nested error")
 
     def test_defaults_to_system_tmp(self, mock_logger):

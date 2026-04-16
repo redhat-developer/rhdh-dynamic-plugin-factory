@@ -18,7 +18,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import yaml
@@ -187,8 +186,7 @@ class PluginBuildTests:
         for plugin_path in expected_plugins:
             matches = find_outputs_for_plugin(plugin_path, tgz_files)
             assert matches, (
-                f"No .tgz output found for plugin '{plugin_path}'\n"
-                f"Available tgz files: {[f.name for f in tgz_files]}"
+                f"No .tgz output found for plugin '{plugin_path}'\nAvailable tgz files: {[f.name for f in tgz_files]}"
             )
 
     def test_all_plugins_produce_integrity(
@@ -205,9 +203,7 @@ class PluginBuildTests:
                 f"Available integrity files: {[f.name for f in integrity_files]}"
             )
 
-    def test_output_tarballs_are_nonzero(
-        self, container_result: ContainerResult
-    ) -> None:
+    def test_output_tarballs_are_nonzero(self, container_result: ContainerResult) -> None:
         tgz_files = get_output_tgz_files(container_result.output_dir)
         assert tgz_files, "No .tgz files found in output directory"
 
@@ -278,9 +274,7 @@ class MultiWorkspaceBuildTests:
         workspace: str,
     ) -> None:
         expected_plugins = parse_plugins_from_config(config_dir / workspace)
-        integrity_files = get_output_integrity_files(
-            container_result.output_dir / workspace
-        )
+        integrity_files = get_output_integrity_files(container_result.output_dir / workspace)
 
         for plugin_path in expected_plugins:
             matches = find_outputs_for_plugin(plugin_path, integrity_files)
@@ -379,7 +373,7 @@ def run_factory_container(
 
     def _run(
         config_dir: Path,
-        extra_args: Optional[list[str]] = None,
+        extra_args: list[str] | None = None,
         timeout: int = CONTAINER_TIMEOUT,
     ) -> ContainerResult:
         output_dir = tmp_path_factory.mktemp("outputs")
@@ -390,9 +384,12 @@ def run_factory_container(
             container_runtime,
             "run",
             "--rm",
-            "--device", "/dev/fuse",
-            "-v", f"{config_dir}:/config:z",
-            "-v", f"{output_dir}:/outputs:z",
+            "--device",
+            "/dev/fuse",
+            "-v",
+            f"{config_dir}:/config:z",
+            "-v",
+            f"{output_dir}:/outputs:z",
             container_image,
         ]
         if extra_args:
