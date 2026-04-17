@@ -106,7 +106,7 @@ jobs:
           pytest tests/e2e/ -v --tb=long --junitxml=e2e-results.xml -m e2e -n auto --dist loadscope
       - name: Upload E2E test logs
         if: always() && steps.e2e-tests.outcome != 'skipped'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-test-logs-pr-${{ steps.pr-info.outputs.pr_number }}
           path: tests/e2e/logs/
@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload test results
         if: always() && steps.e2e-tests.outcome != 'skipped'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-test-results
           path: e2e-results.xml
