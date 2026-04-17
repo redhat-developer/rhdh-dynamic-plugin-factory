@@ -8,16 +8,13 @@ Tests the two-phase plugins-list.yaml generation:
 """
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 import yaml
-
-from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
+from src.rhdh_dynamic_plugin_factory import constants
 from src.rhdh_dynamic_plugin_factory.constants import PLUGIN_LIST_FILE
 from src.rhdh_dynamic_plugin_factory.exceptions import PluginFactoryError
-from src.rhdh_dynamic_plugin_factory import constants
 
 
 def _make_plugin_dir(base, rel_path, name, role, dependencies=None):
@@ -55,7 +52,12 @@ class TestDiscoverPluginsList:
 
         workspace = Path(config.repo_path)
         _make_plugin_dir(workspace, "plugins/todo", "@test/plugin-todo", "frontend-plugin")
-        _make_plugin_dir(workspace, "plugins/todo-backend", "@test/plugin-todo-backend", "backend-plugin")
+        _make_plugin_dir(
+            workspace,
+            "plugins/todo-backend",
+            "@test/plugin-todo-backend",
+            "backend-plugin",
+        )
 
         result = config.discover_plugins_list()
 
@@ -128,7 +130,10 @@ class TestDiscoverPluginsList:
 
         workspace = Path(config.repo_path)
         _make_plugin_dir(
-            workspace, "plugins/backend", "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
 
@@ -168,11 +173,17 @@ class TestPopulatePluginsBuildArgs:
 
         workspace = Path(config.repo_path)
         _make_plugin_dir(
-            workspace, "plugins/backend", "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
         _make_plugin_dir(
-            workspace, "plugins/frontend", "@test/my-frontend", "frontend-plugin",
+            workspace,
+            "plugins/frontend",
+            "@test/my-frontend",
+            "frontend-plugin",
         )
 
         plugins_file = Path(config_dir) / PLUGIN_LIST_FILE
@@ -242,10 +253,16 @@ class TestTwoPhaseFlow:
 
         workspace = Path(config.repo_path)
         _make_plugin_dir(
-            workspace, "plugins/todo", "@test/plugin-todo", "frontend-plugin",
+            workspace,
+            "plugins/todo",
+            "@test/plugin-todo",
+            "frontend-plugin",
         )
         _make_plugin_dir(
-            workspace, "plugins/todo-backend", "@test/plugin-todo-backend", "backend-plugin",
+            workspace,
+            "plugins/todo-backend",
+            "@test/plugin-todo-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
 

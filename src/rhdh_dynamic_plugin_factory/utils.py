@@ -6,16 +6,18 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from collections.abc import Callable
+from logging import Logger
 from pathlib import Path
-from typing import Optional, Callable
+from typing import IO
 
 from .exceptions import ExecutionError, PluginFactoryError
 
 
-def _stream_output(pipe, log_func: Callable[[str], None]) -> None:
+def _stream_output(pipe: IO[str], log_func: Callable[[str], None]) -> None:
     """
     Stream output from a pipe to a logging function.
-    
+
     Args:
         pipe: A file-like object to read from (e.g., process.stdout or process.stderr)
         log_func: A callable that logs each line (e.g., logger.info or logger.error)
@@ -29,24 +31,24 @@ def _stream_output(pipe, log_func: Callable[[str], None]) -> None:
 
 def run_command_with_streaming(
     cmd: list[str],
-    logger_instance,
-    cwd: Optional[Path] = None,
-    env: Optional[dict] = None,
-    stderr_log_func: Optional[Callable[[str], None]] = None
+    logger_instance: Logger,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    stderr_log_func: Callable[[str], None] | None = None,
 ) -> int:
     """
     Run a command with real-time streaming of both stdout and stderr.
-    
+
     Args:
         cmd: Command and arguments to run
         logger_instance: Logger instance to use for output
         cwd: Working directory for the command
         env: Environment variables for the command
-        stderr_log_func: Optional custom logging function for stderr. 
+        stderr_log_func: Optional custom logging function for stderr.
                         Defaults to logger_instance.warning if not provided.
-                        Use logger_instance.info for commands that write 
+                        Use logger_instance.info for commands that write
                         informational output to stderr (like git).
-    
+
     Returns:
         The return code of the process
     """
@@ -54,7 +56,7 @@ def run_command_with_streaming(
     # (many tools write both warnings and errors to stderr)
     if stderr_log_func is None:
         stderr_log_func = logger_instance.warning
-    
+
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -62,36 +64,30 @@ def run_command_with_streaming(
         text=True,
         bufsize=1,
         cwd=cwd,
-        env=env
+        env=env,
     )
-    
+
     # Create threads to read stdout and stderr concurrently
-    stdout_thread = threading.Thread(
-        target=_stream_output,
-        args=(process.stdout, logger_instance.info)
-    )
-    stderr_thread = threading.Thread(
-        target=_stream_output,
-        args=(process.stderr, stderr_log_func)
-    )
-    
+    stdout_thread = threading.Thread(target=_stream_output, args=(process.stdout, logger_instance.info))
+    stderr_thread = threading.Thread(target=_stream_output, args=(process.stderr, stderr_log_func))
+
     stdout_thread.start()
     stderr_thread.start()
-    
+
     stdout_thread.join()
     stderr_thread.join()
-    
+
     process.wait()
-    
+
     return process.returncode
 
 
-def collect_build_logs(logger, tmp_dir: Optional[Path] = None) -> None:
+def collect_build_logs(logger: Logger, tmp_dir: Path | None = None) -> None:
     """Find and display build log files left by failed native package builds.
-    
+
     Scans a temp directory for build.log files (typically created by yarn when
     native dependencies fail to compile) and logs their full contents.
-    
+
     Args:
         logger: Logger instance to use for output.
         tmp_dir: Directory to scan for build.log files. Defaults to the
@@ -109,9 +105,7 @@ def collect_build_logs(logger, tmp_dir: Optional[Path] = None) -> None:
         logger.warning(f"[yellow]No build logs found in {search_dir}[/yellow]")
         return
 
-    logger.warning(
-        f"[yellow]Found {len(build_logs)} build log(s) that may contain details about the failure:[/yellow]"
-    )
+    logger.warning(f"[yellow]Found {len(build_logs)} build log(s) that may contain details about the failure:[/yellow]")
 
     for log_path in build_logs:
         try:
@@ -129,39 +123,40 @@ def collect_build_logs(logger, tmp_dir: Optional[Path] = None) -> None:
             logger.warning(f"  {line}")
 
 
-def display_export_results(workspace_path: Path, logger) -> bool:
+def display_export_results(workspace_path: Path, logger: Logger) -> bool:
     """Display results from export script output files.
-    
+
     Args:
         workspace_path: Path to the workspace where the output files are located.
         logger: Logger instance to use for output.
-    
+
     Returns:
         True if there were any failed exports, False otherwise.
     """
     failed_file = workspace_path / "failed-exports-output"
     published_file = workspace_path / "published-exports-output"
     has_failures = False
-    
+
     if failed_file.exists():
-        failed_exports = failed_file.read_text().strip().split('\n') if failed_file.stat().st_size > 0 else []
+        failed_exports = failed_file.read_text().strip().split("\n") if failed_file.stat().st_size > 0 else []
         if failed_exports and failed_exports[0]:
             has_failures = True
             logger.error(f"Failed exports ({len(failed_exports)}): {', '.join(failed_exports)}")
-    
+
     if published_file.exists():
-        published_exports = published_file.read_text().strip().split('\n') if published_file.stat().st_size > 0 else []
+        published_exports = published_file.read_text().strip().split("\n") if published_file.stat().st_size > 0 else []
         if published_exports and published_exports[0]:
             logger.info(f"[green]Published images ({len(published_exports)}):[/green]")
             for image in published_exports:
                 logger.info(f"  - {image}")
-    
+
     return has_failures
+
 
 def clean_directory(directory: Path) -> None:
     """Clean the directory by removing all contents but keeping the directory itself.
     This is to handle cleaning volume mounted directories.
-    
+
     Args:
         directory: Path to the directory to clean.
     Raises:
@@ -180,23 +175,24 @@ def clean_directory(directory: Path) -> None:
             returncode=1,
         ) from e
 
-def prompt_or_clean_directory(path: Path, clean: bool, logger) -> None:
+
+def prompt_or_clean_directory(path: Path, clean: bool, logger: Logger) -> None:
     """Clears contents of a non-empty directory by automatically or by prompting the user.
-    
+
     If the directory is empty or does not exist, this is a no-op.
-    
+
     Args:
         path: Directory to clean
         clean: If True, auto-clean without prompting.
         logger: Logger instance.
-    
+
     Raises:
         PluginFactoryError: If the user declines to clean.
         ExecutionError: If the directory or files cannot be removed. (Thrown from clean_directory)
     """
     if not path.exists() or not any(path.iterdir()):
         return
-    
+
     logger.warning(f"[yellow]Source directory {path} is not empty[/yellow]")
     if clean:
         logger.warning(f"[yellow]`--clean` argument set, automatically cleaning {path}[/yellow]")
@@ -208,13 +204,15 @@ def prompt_or_clean_directory(path: Path, clean: bool, logger) -> None:
             logger.warning("[yellow]Aborted[/yellow]")
             raise PluginFactoryError("Directory clean aborted by user")
         else:
-            logger.warning(f"[yellow]`y` selected. Cleaning {path}. Note: you can use the `--clean` argument to automatically clean the directory and skip this prompt next time.[/yellow]")
+            logger.warning(
+                f"[yellow]`y` selected. Cleaning {path}. Note: you can use the `--clean` argument to automatically clean the directory and skip this prompt next time.[/yellow]"
+            )
             clean_directory(path)
 
 
 def repo_dir_name(repo_url: str) -> str:
     """Derive a directory name from a git repository URL.
-    
+
     Examples:
         https://github.com/backstage/community-plugins.git -> community-plugins
         https://github.com/awslabs/backstage-plugins-for-aws -> backstage-plugins-for-aws

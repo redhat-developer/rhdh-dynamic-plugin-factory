@@ -2,29 +2,49 @@
 Command-line interface for RHDH Plugin Factory - Setup and orchestration tool.
 """
 
-import json
-import sys
-import os
 import argparse
+import json
+import os
+import sys
 from pathlib import Path
 
 # Handle both direct script execution and module execution
 try:
     from .__version__ import __version__
-    from .logger import setup_logging, get_logger
     from .config import PluginFactoryConfig
-    from .source_config import WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
-    from .utils import run_command_with_streaming, prompt_or_clean_directory, collect_build_logs
-    from .exceptions import PluginFactoryError, ConfigurationError, ExecutionError
+    from .exceptions import ConfigurationError, ExecutionError, PluginFactoryError
+    from .logger import get_logger, setup_logging
+    from .source_config import (
+        WorkspaceInfo,
+        clone_workspaces_with_worktrees,
+        discover_workspaces,
+    )
+    from .utils import (
+        collect_build_logs,
+        prompt_or_clean_directory,
+        run_command_with_streaming,
+    )
 except ImportError:
     # For direct script execution, add parent directory to path
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from rhdh_dynamic_plugin_factory.__version__ import __version__
-    from rhdh_dynamic_plugin_factory.logger import setup_logging, get_logger
     from rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
-    from rhdh_dynamic_plugin_factory.source_config import WorkspaceInfo, discover_workspaces, clone_workspaces_with_worktrees
-    from rhdh_dynamic_plugin_factory.utils import run_command_with_streaming, prompt_or_clean_directory, collect_build_logs
-    from rhdh_dynamic_plugin_factory.exceptions import PluginFactoryError, ConfigurationError, ExecutionError
+    from rhdh_dynamic_plugin_factory.exceptions import (
+        ConfigurationError,
+        ExecutionError,
+        PluginFactoryError,
+    )
+    from rhdh_dynamic_plugin_factory.logger import get_logger, setup_logging
+    from rhdh_dynamic_plugin_factory.source_config import (
+        WorkspaceInfo,
+        clone_workspaces_with_worktrees,
+        discover_workspaces,
+    )
+    from rhdh_dynamic_plugin_factory.utils import (
+        collect_build_logs,
+        prompt_or_clean_directory,
+        run_command_with_streaming,
+    )
 
 logger = get_logger("cli")
 
@@ -57,86 +77,83 @@ Examples:
 
         # Build a single workspace of plugins using CLI args instead of source.json
         python src/rhdh_dynamic_plugin_factory --source-repo https://github.com/backstage/community-plugins --source-ref main --workspace-path workspaces/todo --config-dir ./config --repo-path ./source --output-dir ./outputs
-        """
+        """,
     )
-    parser.add_argument(
-        "-v", "--version",
-        action="version",
-        version=_build_version_string()
-    )
+    parser.add_argument("-v", "--version", action="version", version=_build_version_string())
     parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Set logging level"
+        help="Set logging level",
     )
     parser.add_argument(
         "--config-dir",
         type=Path,
         default=Path("/config"),
-        help="Configuration directory path containing plugin-list.yaml, .env, patches/ and overlays/ directories"
+        help="Configuration directory path containing plugin-list.yaml, .env, patches/ and overlays/ directories",
     )
     parser.add_argument(
         "--repo-path",
         type=Path,
         default=Path("/source"),
-        help="Path to store the plugin source code"
+        help="Path to store the plugin source code",
     )
     parser.add_argument(
         "--workspace-path",
         type=Path,
-        help="Path to the workspace from root of the repository. Can also be provided via the source.json workspace-path field."
+        help="Path to the workspace from root of the repository. Can also be provided via the source.json workspace-path field.",
     )
     parser.add_argument(
         "--source-repo",
         type=str,
         default=None,
-        help="Git repository URL. When provided, source.json is ignored and the repository is cloned from this URL."
+        help="Git repository URL. When provided, source.json is ignored and the repository is cloned from this URL.",
     )
     parser.add_argument(
         "--source-ref",
         type=str,
         default=None,
-        help="Git ref (branch/tag/commit) to check out. Optional: defaults to the repository's default branch. Requires --source-repo."
+        help="Git ref (branch/tag/commit) to check out. Optional: defaults to the repository's default branch. Requires --source-repo.",
     )
     parser.add_argument(
         "--push-images",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Push images to registry (default: false)"
+        help="Push images to registry (default: false)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("/outputs"),
-        help="Path to the output directory"
+        help="Path to the output directory",
     )
     parser.add_argument(
         "--use-local",
         action="store_true",
         default=False,
-        help="Use local repository content instead of cloning from source.json"
+        help="Use local repository content instead of cloning from source.json",
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Show verbose output (show file and line number)"
+        help="Show verbose output (show file and line number)",
     )
     parser.add_argument(
         "--clean",
         action="store_true",
         default=False,
-        help="Clean the source directory before cloning source repository. WARNING: This will remove all the contents of the source directory."
+        help="Clean the source directory before cloning source repository. WARNING: This will remove all the contents of the source directory.",
     )
     parser.add_argument(
         "--generate-build-args",
         action="store_true",
         default=False,
         help="When plugins-list.yaml exists, (re)compute build arguments for all "
-             "listed plugins using dependency analysis. WARNING: This overwrites "
-             "your plugins-list.yaml with updated build args."
+        "listed plugins using dependency analysis. WARNING: This overwrites "
+        "your plugins-list.yaml with updated build args.",
     )
     return parser
+
 
 def install_dependencies(workspace_path: Path) -> None:
     """Install dependencies in the workspace using yarn install with corepack.
@@ -146,7 +163,7 @@ def install_dependencies(workspace_path: Path) -> None:
     """
     logger.info("[bold blue]Installing workspace dependencies[/bold blue]")
     STEP_NAME = "install dependencies"
-    
+
     commands = [
         (["pwd"], "Checking workspace path"),
         (["corepack", "enable"], "Enabling corepack"),
@@ -154,21 +171,16 @@ def install_dependencies(workspace_path: Path) -> None:
         (["yarn", "install", "--immutable"], "Installing dependencies"),
         (["yarn", "tsc"], "Running TypeScript compilation"),
     ]
-        
+
     try:
         env = os.environ.copy()
-        env['COREPACK_ENABLE_DOWNLOAD_PROMPT'] = '0'  # Disable download prompts
-        
+        env["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0"  # Disable download prompts
+
         for cmd, description in commands:
             logger.info(f"[cyan]{description}[/cyan]")
-            
-            returncode = run_command_with_streaming(
-                cmd,
-                logger,
-                cwd=workspace_path,
-                env=env
-            )
-            
+
+            returncode = run_command_with_streaming(cmd, logger, cwd=workspace_path, env=env)
+
             if cmd[:2] == ["yarn", "install"]:
                 collect_build_logs(logger)
 
@@ -176,9 +188,9 @@ def install_dependencies(workspace_path: Path) -> None:
                 raise ExecutionError(
                     f"{description} failed with exit code {returncode}",
                     step=STEP_NAME,
-                    returncode=returncode
+                    returncode=returncode,
                 )
-            
+
             logger.info(f"[green]{description} completed successfully[/green]")
     except ExecutionError:
         raise
@@ -187,6 +199,7 @@ def install_dependencies(workspace_path: Path) -> None:
             f"Failed to install dependencies: {e}",
             step=STEP_NAME,
         ) from e
+
 
 def _process_workspace(
     config: PluginFactoryConfig,
@@ -197,7 +210,7 @@ def _process_workspace(
     generate_build_args: bool = False,
 ) -> None:
     """Execute the plugin factory pipeline for a single workspace.
-    
+
     Args:
         config: Global factory configuration.
         workspace_config_dir: Config directory for this workspace (patches, overlays, plugins-list).
@@ -244,19 +257,19 @@ def _load_env_for_workspace(
     workspace_env_path: Path,
 ) -> None:
     """Apply workspace-specific .env overrides on top of the base environment.
-    
+
     Precedence (highest to lowest):
         workspace .env  >  root .env  >  Podman/system env vars  >  default.env
-    
+
     base_env already contains Podman + default.env + root .env (captured once
     after load_from_env in _run_multi_workspace). This function restores that
     baseline and layers only the workspace-specific .env on top.
     """
     from dotenv import load_dotenv
-    
+
     os.environ.clear()
     os.environ.update(base_env)
-    
+
     if workspace_env_path.exists():
         load_dotenv(workspace_env_path, override=True)
 
@@ -269,9 +282,9 @@ def _run(args: argparse.Namespace) -> None:
     which is caught by the centralized handler in main().
     """
     config_dir = Path(str(args.config_dir))
-    
+
     workspaces = discover_workspaces(config_dir)
-    
+
     if workspaces:
         _run_multi_workspace(args, workspaces)
     else:
@@ -281,28 +294,28 @@ def _run(args: argparse.Namespace) -> None:
 def _run_multi_workspace(args: argparse.Namespace, workspaces: list[WorkspaceInfo]) -> None:
     """Execute multi-workspace mode."""
     # Reject single-workspace-only CLI args
-    if getattr(args, 'source_repo', None):
+    if getattr(args, "source_repo", None):
         raise ConfigurationError(
             "--source-repo cannot be used in multi-workspace mode. "
             "Each workspace must define its source in its own source.json."
         )
-    if getattr(args, 'source_ref', None):
+    if getattr(args, "source_ref", None):
         raise ConfigurationError(
             "--source-ref cannot be used in multi-workspace mode. "
             "Each workspace must define its source in its own source.json."
         )
-    if getattr(args, 'workspace_path', None):
+    if getattr(args, "workspace_path", None):
         raise ConfigurationError(
             "--workspace-path cannot be used in multi-workspace mode. "
             "Each workspace defines its workspace-path in its own source.json."
         )
-    
+
     config_dir = Path(str(args.config_dir))
     base_repo_path = Path(str(args.repo_path))
     base_output_dir = Path(str(args.output_dir))
-        
+
     logger.info(f"[bold blue]Multi-workspace mode: discovered {len(workspaces)} workspace(s)[/bold blue]")
-    
+
     # Warn about any root-level content that is not a workspace or the root .env
     workspace_names = {ws.name for ws in workspaces}
     ignored_items: list[str] = []
@@ -320,13 +333,13 @@ def _run_multi_workspace(args: argparse.Namespace, workspaces: list[WorkspaceInf
             f"and should be moved into a workspace subdirectory or removed:\n"
             f"{items_str}[/yellow]"
         )
-    
+
     logger.info("[bold blue]Workspaces to be processed:[/bold blue]")
     for ws in workspaces:
         logger.info(f"  - {ws.name}: {ws.source_config.repo} @ {ws.source_config.repo_ref}")
         # Resolve per-workspace source and output paths to avoid conflicts between workspaces
         ws.resolve_paths(base_repo_path, base_output_dir)
-    
+
     # Load global config (uses root .env for global settings like registry credentials)
     config = PluginFactoryConfig.load_from_env(
         args=args,
@@ -334,11 +347,11 @@ def _run_multi_workspace(args: argparse.Namespace, workspaces: list[WorkspaceInf
         push_images=args.push_images,
         multi_workspace=True,
     )
-    
+
     # base_env now contains Podman + default.env + root .env — everything that is
     # constant across workspaces. Per-workspace loop only layers workspace .env on top.
     base_env = dict(os.environ)
-    
+
     # Clone repositories / create worktrees (unless --use-local)
     if not config.use_local:
         logger.info("[bold blue]Setting up repositories with git worktrees[/bold blue]")
@@ -352,19 +365,19 @@ def _run_multi_workspace(args: argparse.Namespace, workspaces: list[WorkspaceInf
                     f"Local repository for workspace '{ws.name}' not found at {ws.repo_path}. "
                     f"When using --use-local in multi-workspace mode, place repos at <repo-path>/<workspace-name>/."
                 )
-    
+
     errors: list[tuple[str, Exception]] = []
     successes: list[str] = []
-    
+
     for ws in workspaces:
         logger.info(f"\n[bold blue]{'=' * 60}[/bold blue]")
         logger.info(f"[bold blue]Processing workspace: {ws.name}[/bold blue]")
         logger.info(f"[bold blue]{'=' * 60}[/bold blue]")
-        
+
         # Restore base env and layer workspace-specific .env on top
         _load_env_for_workspace(base_env, ws.config_dir / ".env")
         config.refresh_registry_config()
-        
+
         try:
             _process_workspace(
                 config=config,
@@ -378,19 +391,19 @@ def _run_multi_workspace(args: argparse.Namespace, workspaces: list[WorkspaceInf
             logger.info(f"[green]Workspace '{ws.name}' export completed successfully[/green]")
         except PluginFactoryError as e:
             errors.append((ws.name, e))
-            logger.error(f"[red]Workspace '{ws.name}' export failed: {e}[/red]") 
-    
+            logger.error(f"[red]Workspace '{ws.name}' export failed: {e}[/red]")
+
     # Report summary
     logger.info(f"\n[bold blue]{'=' * 60}[/bold blue]")
     logger.info("[bold blue]Multi-workspace Summary[/bold blue]")
     logger.info(f"[bold blue]{'=' * 60}[/bold blue]")
     logger.info(f"  Total: {len(workspaces)} | Succeeded: {len(successes)} | Failed: {len(errors)}")
-    
+
     for name in successes:
         logger.info(f"  [green]{name} completed successfully[/green]")
     for name, error in errors:
         logger.error(f"  [red]{name} failed: {error}[/red]")
-    
+
     if errors:
         raise ExecutionError(
             f"{len(errors)} of {len(workspaces)} workspace(s) failed",
@@ -411,7 +424,7 @@ def _run_single_workspace(args: argparse.Namespace) -> None:
     # Resolve workspace_path from source_config if not set via CLI/env
     if not config.workspace_path and source_config:
         config.workspace_path = source_config.workspace_path
-    
+
     # Validate workspace_path is set (may come from CLI, env var, or source.json)
     if not config.workspace_path:
         raise ConfigurationError(
@@ -450,7 +463,7 @@ def _run_single_workspace(args: argparse.Namespace) -> None:
     )
 
 
-def main():
+def main() -> None:
     """Main entry point for the RHDH Dynamic Plugin Factory."""
     parser = create_parser()
     args = parser.parse_args()

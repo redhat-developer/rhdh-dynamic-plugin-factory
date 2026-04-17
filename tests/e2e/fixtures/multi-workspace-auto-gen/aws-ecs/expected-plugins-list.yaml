@@ -1,0 +1,2 @@
+plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common --embed-package @aws/aws-core-plugin-for-backstage-node --embed-package @backstage/backend-common --shared-package !@backstage/backend-common --suppress-native-package cpu-features
+plugins/ecs/frontend:

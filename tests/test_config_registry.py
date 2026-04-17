@@ -9,11 +9,13 @@ to workspace processing level.  These tests call the methods explicitly.
 """
 
 import subprocess
-from unittest.mock import patch, MagicMock
-import pytest
+from unittest.mock import MagicMock, patch
 
-from src.rhdh_dynamic_plugin_factory.config import PluginFactoryConfig
-from src.rhdh_dynamic_plugin_factory.exceptions import ConfigurationError, ExecutionError
+import pytest
+from src.rhdh_dynamic_plugin_factory.exceptions import (
+    ConfigurationError,
+    ExecutionError,
+)
 
 
 class TestRegistryValidation:
@@ -167,29 +169,29 @@ class TestBuildahLogin:
             registry_insecure=False,
         )
 
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            with patch.object(config, 'logger') as mock_logger:
+            with patch.object(config, "logger") as mock_logger:
                 config._buildah_login()
 
                 mock_run.assert_called_once()
                 call_args = mock_run.call_args
 
                 expected_cmd = [
-                    "buildah", "login",
-                    "--username", "test-user",
-                    "--password", "test-password",
-                    "quay.io"
+                    "buildah",
+                    "login",
+                    "--username",
+                    "test-user",
+                    "--password",
+                    "test-password",
+                    "quay.io",
                 ]
                 assert call_args[0][0] == expected_cmd
-                assert call_args[1]['check'] is True
-                assert call_args[1]['stdout'] == subprocess.PIPE
-                assert call_args[1]['stderr'] == subprocess.PIPE
+                assert call_args[1]["check"] is True
+                assert call_args[1]["capture_output"] is True
 
-                mock_logger.info.assert_called_with(
-                    "Logged in to registry quay.io with buildah."
-                )
+                mock_logger.info.assert_called_with("Logged in to registry quay.io with buildah.")
 
     def test_failed_buildah_login(self, make_config):
         """Failed buildah login raises ExecutionError."""
@@ -202,11 +204,9 @@ class TestBuildahLogin:
             registry_insecure=False,
         )
 
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_error = subprocess.CalledProcessError(
-                returncode=1,
-                cmd=['buildah', 'login'],
-                stderr=b"Authentication failed"
+                returncode=1, cmd=["buildah", "login"], stderr=b"Authentication failed"
             )
             mock_run.side_effect = mock_error
 
@@ -227,7 +227,7 @@ class TestBuildahLogin:
             registry_insecure=True,
         )
 
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             config._buildah_login()
@@ -236,11 +236,14 @@ class TestBuildahLogin:
             call_args = mock_run.call_args
 
             expected_cmd = [
-                "buildah", "login",
-                "--username", "test-user",
-                "--password", "test-password",
+                "buildah",
+                "login",
+                "--username",
+                "test-user",
+                "--password",
+                "test-password",
                 "--tls-verify=false",
-                "localhost:5000"
+                "localhost:5000",
             ]
             assert call_args[0][0] == expected_cmd
 
@@ -255,7 +258,7 @@ class TestBuildahLogin:
             registry_insecure=False,
         )
 
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
             config._buildah_login()
@@ -264,10 +267,13 @@ class TestBuildahLogin:
             call_args = mock_run.call_args
 
             expected_cmd = [
-                "buildah", "login",
-                "--username", "test-user",
-                "--password", "test-password",
-                "quay.io"
+                "buildah",
+                "login",
+                "--username",
+                "test-user",
+                "--password",
+                "test-password",
+                "quay.io",
             ]
             assert call_args[0][0] == expected_cmd
             assert "--tls-verify=false" not in call_args[0][0]
@@ -281,8 +287,8 @@ class TestBuildahLogin:
             registry_auth_file="/auth.json",
         )
 
-        with patch('subprocess.run') as mock_run:
-            with patch.object(config, 'logger') as mock_logger:
+        with patch("subprocess.run") as mock_run:
+            with patch.object(config, "logger") as mock_logger:
                 config._buildah_login()
                 mock_run.assert_not_called()
                 mock_logger.info.assert_called_once()
@@ -299,7 +305,7 @@ class TestBuildahLogin:
             registry_auth_file="/auth.json",
         )
 
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             config._buildah_login()
             mock_run.assert_not_called()
 
@@ -314,8 +320,8 @@ class TestBuildahLogin:
             registry_auth_file=None,
         )
 
-        with patch('subprocess.run') as mock_run:
-            with patch.object(config, 'logger') as mock_logger:
+        with patch("subprocess.run") as mock_run:
+            with patch.object(config, "logger") as mock_logger:
                 config._buildah_login()
                 mock_run.assert_not_called()
                 mock_logger.debug.assert_called_once()

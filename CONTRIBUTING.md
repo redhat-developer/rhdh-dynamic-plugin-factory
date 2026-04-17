@@ -272,6 +272,16 @@ pytest tests/test_config.py::TestPluginFactoryConfigLoadFromEnv::test_load_from_
 pytest tests/ --cov=src/rhdh_dynamic_plugin_factory --cov-report=term-missing
 ```
 
+### Running E2E Tests
+
+E2E tests require a built image of the factory which is provided via the `E2E_IMAGE` environmental variable.
+
+Use the `-n auto --dist loadscope` arguments to run tests in parallel.
+
+```bash
+E2E_IMAGE=quay.io/rhdh-community/dynamic-plugins-factory:latest pytest -m e2e -n auto --dist loadscope
+```
+
 This will show which lines of code are not covered by tests.
 
 ### Writing Tests

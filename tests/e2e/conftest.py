@@ -18,14 +18,13 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import yaml
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 DEFAULT_LOG_DIR = Path(__file__).parent / "logs"
-CONTAINER_TIMEOUT = 900  # 15 minutes
+CONTAINER_TIMEOUT = 1800  # 30 minutes (allows headroom for parallel runs)
 
 
 @dataclass
@@ -70,14 +69,26 @@ def parse_plugins_from_config(config_dir: Path) -> list[str]:
 def plugin_path_to_output_pattern(plugin_path: str) -> re.Pattern:
     """Build a regex that matches the npm-pack tarball for *plugin_path*.
 
-    For ``plugins/todo`` the last path component is ``todo`` and the expected
-    tarball looks like ``backstage-community-plugin-todo-0.12.0.tgz`` (or with
-    an optional ``-dynamic`` suffix before the version).  The pattern ensures
-    we do not accidentally match ``todo-backend`` by requiring a digit (the
-    start of the semver version) immediately after the plugin name.
+    For flat paths like ``plugins/todo`` the last component (``todo``) appears
+    directly in the tarball name, e.g. ``backstage-community-plugin-todo-0.12.0.tgz``.
+
+    For nested paths like ``plugins/ecs/frontend`` the last component is a
+    generic role name that may not appear in the tarball at all.  In that case
+    we match on the **parent** directory (``ecs``) and distinguish frontend
+    from backend via the presence/absence of ``-backend`` in the filename.
     """
-    plugin_name = Path(plugin_path).name
-    return re.compile(rf"-{re.escape(plugin_name)}(-dynamic)?-\d.*\.tgz$")
+    parts = Path(plugin_path).parts
+    plugin_name = parts[-1]
+
+    suffix = r"\.tgz(\.integrity)?$"
+
+    if len(parts) >= 2 and plugin_name in ("frontend", "backend"):
+        parent_name = re.escape(parts[-2])
+        if plugin_name == "backend":
+            return re.compile(rf"{parent_name}.*-backend(-dynamic)?-\d.*{suffix}")
+        return re.compile(rf"{parent_name}(?!.*-backend).*(-dynamic)?-\d.*{suffix}")
+
+    return re.compile(rf"-{re.escape(plugin_name)}(-dynamic)?-\d.*{suffix}")
 
 
 def get_output_tgz_files(output_dir: Path) -> list[Path]:
@@ -92,11 +103,14 @@ def get_output_integrity_files(output_dir: Path) -> list[Path]:
 
 def find_outputs_for_plugin(
     plugin_path: str,
-    tgz_files: list[Path],
+    output_files: list[Path],
 ) -> list[Path]:
-    """Return tgz files from *tgz_files* that match *plugin_path*."""
+    """Return files from *output_files* whose names match *plugin_path*.
+
+    Works for both ``.tgz`` and ``.tgz.integrity`` files.
+    """
     pattern = plugin_path_to_output_pattern(plugin_path)
-    return [f for f in tgz_files if pattern.search(f.name)]
+    return [f for f in output_files if pattern.search(f.name)]
 
 
 def _collect_log_errors(output: str) -> list[str]:
@@ -135,6 +149,174 @@ def assert_no_errors_in_logs(result: ContainerResult) -> None:
         + f"\n\nFull log: {result.log_file}"
         + f"\n\n--- container output (last {max_tail} chars) ---\n{tail}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Base test class
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class PluginBuildTests:
+    """Reusable test suite for single-workspace plugin builds.
+
+    Subclasses must provide two class-scoped fixtures:
+
+    - ``container_result`` -> :class:`ContainerResult`
+    - ``expected_plugins`` -> ``list[str]``
+    """
+
+    def test_container_exits_successfully(self, container_result: ContainerResult) -> None:
+        assert container_result.returncode == 0, (
+            f"Container exited with code {container_result.returncode}\n"
+            f"Full log: {container_result.log_file}\n"
+            f"output:\n{container_result.output[-3000:]}"
+        )
+
+    def test_no_errors_in_logs(self, container_result: ContainerResult) -> None:
+        assert_no_errors_in_logs(container_result)
+
+    def test_all_plugins_produce_tgz(
+        self,
+        container_result: ContainerResult,
+        expected_plugins: list[str],
+    ) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir)
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, tgz_files)
+            assert matches, (
+                f"No .tgz output found for plugin '{plugin_path}'\nAvailable tgz files: {[f.name for f in tgz_files]}"
+            )
+
+    def test_all_plugins_produce_integrity(
+        self,
+        container_result: ContainerResult,
+        expected_plugins: list[str],
+    ) -> None:
+        integrity_files = get_output_integrity_files(container_result.output_dir)
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, integrity_files)
+            assert matches, (
+                f"No .tgz.integrity output found for plugin '{plugin_path}'\n"
+                f"Available integrity files: {[f.name for f in integrity_files]}"
+            )
+
+    def test_output_tarballs_are_nonzero(self, container_result: ContainerResult) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir)
+        assert tgz_files, "No .tgz files found in output directory"
+
+        for tgz in tgz_files:
+            assert tgz.stat().st_size > 0, f"Tarball is empty: {tgz.name}"
+
+    def test_output_count_matches_plugins(
+        self,
+        container_result: ContainerResult,
+        expected_plugins: list[str],
+    ) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir)
+        assert len(tgz_files) >= len(expected_plugins), (
+            f"Expected at least {len(expected_plugins)} tgz outputs "
+            f"(one per plugin), got {len(tgz_files)}.\n"
+            f"Plugins: {expected_plugins}\n"
+            f"Outputs: {[f.name for f in tgz_files]}"
+        )
+
+
+@pytest.mark.e2e
+class MultiWorkspaceBuildTests:
+    """Reusable test suite for multi-workspace plugin builds.
+
+    Subclasses must provide:
+
+    - Class attribute ``WORKSPACES`` -> ``list[str]``
+    - Class-scoped fixture ``container_result`` -> :class:`ContainerResult`
+    - Class-scoped fixture ``config_dir`` -> :class:`Path`
+      (directory containing per-workspace subdirectories with configs)
+
+    The ``workspace`` test parameter is automatically parametrized via the
+    :func:`pytest_generate_tests` hook using the ``WORKSPACES`` attribute.
+    """
+
+    WORKSPACES: list[str] = []
+
+    def test_container_exits_successfully(self, container_result: ContainerResult) -> None:
+        assert container_result.returncode == 0, (
+            f"Container exited with code {container_result.returncode}\n"
+            f"Full log: {container_result.log_file}\n"
+            f"output:\n{container_result.output[-3000:]}"
+        )
+
+    def test_no_errors_in_logs(self, container_result: ContainerResult) -> None:
+        assert_no_errors_in_logs(container_result)
+
+    def test_workspace_produces_tgz(
+        self,
+        container_result: ContainerResult,
+        config_dir: Path,
+        workspace: str,
+    ) -> None:
+        expected_plugins = parse_plugins_from_config(config_dir / workspace)
+        tgz_files = get_output_tgz_files(container_result.output_dir / workspace)
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, tgz_files)
+            assert matches, (
+                f"[{workspace}] No .tgz output found for plugin '{plugin_path}'\n"
+                f"Available tgz files: {[f.name for f in tgz_files]}"
+            )
+
+    def test_workspace_produces_integrity(
+        self,
+        container_result: ContainerResult,
+        config_dir: Path,
+        workspace: str,
+    ) -> None:
+        expected_plugins = parse_plugins_from_config(config_dir / workspace)
+        integrity_files = get_output_integrity_files(container_result.output_dir / workspace)
+
+        for plugin_path in expected_plugins:
+            matches = find_outputs_for_plugin(plugin_path, integrity_files)
+            assert matches, (
+                f"[{workspace}] No .tgz.integrity output found for plugin "
+                f"'{plugin_path}'\n"
+                f"Available integrity files: {[f.name for f in integrity_files]}"
+            )
+
+    def test_workspace_tarballs_are_nonzero(
+        self,
+        container_result: ContainerResult,
+        workspace: str,
+    ) -> None:
+        tgz_files = get_output_tgz_files(container_result.output_dir / workspace)
+        assert tgz_files, f"[{workspace}] No .tgz files found in output directory"
+
+        for tgz in tgz_files:
+            assert tgz.stat().st_size > 0, f"[{workspace}] Tarball is empty: {tgz.name}"
+
+    def test_workspace_output_count_matches_plugins(
+        self,
+        container_result: ContainerResult,
+        config_dir: Path,
+        workspace: str,
+    ) -> None:
+        expected_plugins = parse_plugins_from_config(config_dir / workspace)
+        tgz_files = get_output_tgz_files(container_result.output_dir / workspace)
+        assert len(tgz_files) >= len(expected_plugins), (
+            f"[{workspace}] Expected at least {len(expected_plugins)} tgz outputs "
+            f"(one per plugin), got {len(tgz_files)}.\n"
+            f"Plugins: {expected_plugins}\n"
+            f"Outputs: {[f.name for f in tgz_files]}"
+        )
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrize ``workspace`` from the test class's ``WORKSPACES`` attribute."""
+    if "workspace" in metafunc.fixturenames:
+        cls = metafunc.cls
+        if cls and hasattr(cls, "WORKSPACES"):
+            metafunc.parametrize("workspace", cls.WORKSPACES)
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +373,7 @@ def run_factory_container(
 
     def _run(
         config_dir: Path,
-        extra_args: Optional[list[str]] = None,
+        extra_args: list[str] | None = None,
         timeout: int = CONTAINER_TIMEOUT,
     ) -> ContainerResult:
         output_dir = tmp_path_factory.mktemp("outputs")
@@ -202,9 +384,12 @@ def run_factory_container(
             container_runtime,
             "run",
             "--rm",
-            "--device", "/dev/fuse",
-            "-v", f"{config_dir}:/config:z",
-            "-v", f"{output_dir}:/outputs:z",
+            "--device",
+            "/dev/fuse",
+            "-v",
+            f"{config_dir}:/config:z",
+            "-v",
+            f"{output_dir}:/outputs:z",
             container_image,
         ]
         if extra_args:

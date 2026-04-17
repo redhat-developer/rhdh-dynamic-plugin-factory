@@ -5,99 +5,99 @@ Tests the plugin list configuration loading and management.
 """
 
 import json
-import yaml
-import pytest
 
-from src.rhdh_dynamic_plugin_factory.plugin_list_config import PluginListConfig
+import pytest
+import yaml
 from src.rhdh_dynamic_plugin_factory import constants
+from src.rhdh_dynamic_plugin_factory.plugin_list_config import PluginListConfig
 
 
 class TestPluginListConfigFromFile:
     """Tests for PluginListConfig.from_file method."""
-    
+
     def test_from_file_valid_yaml(self, tmp_path):
         """Test loading valid YAML with plugins."""
         yaml_content = """plugins/ecs/frontend:
 plugins/ecs/backend: --embed-package @aws/aws-core-plugin-for-backstage-common --embed-package @aws/aws-core-plugin-for-backstage-node
 plugins/codebuild/backend:
 """
-        
+
         plugins_file = tmp_path / "plugins-list.yaml"
         plugins_file.write_text(yaml_content)
-        
+
         config = PluginListConfig.from_file(plugins_file)
         plugins = config.get_plugins()
-        
+
         assert len(plugins) == 3
         assert "plugins/ecs/frontend" in plugins
         assert plugins["plugins/ecs/frontend"] == ""
         assert "plugins/ecs/backend" in plugins
-        assert plugins["plugins/ecs/backend"] == "--embed-package @aws/aws-core-plugin-for-backstage-common --embed-package @aws/aws-core-plugin-for-backstage-node"
+        assert (
+            plugins["plugins/ecs/backend"]
+            == "--embed-package @aws/aws-core-plugin-for-backstage-common --embed-package @aws/aws-core-plugin-for-backstage-node"
+        )
         assert "plugins/codebuild/backend" in plugins
         assert plugins["plugins/codebuild/backend"] == ""
-    
+
     def test_from_file_empty_yaml(self, tmp_path):
         """Test loading empty YAML file returns empty plugins dict."""
         plugins_file = tmp_path / "plugins-list.yaml"
         plugins_file.write_text("")
-        
+
         config = PluginListConfig.from_file(plugins_file)
         plugins = config.get_plugins()
-        
+
         assert plugins == {}
-    
+
     def test_from_file_yaml_with_null_values(self, tmp_path):
         """Test that null values are converted to empty strings."""
         yaml_content = """plugins/test1:
 plugins/test2:
 """
-        
+
         plugins_file = tmp_path / "plugins-list.yaml"
         plugins_file.write_text(yaml_content)
-        
+
         config = PluginListConfig.from_file(plugins_file)
         plugins = config.get_plugins()
-        
+
         assert plugins["plugins/test1"] == ""
         assert plugins["plugins/test2"] == ""
-    
+
     def test_from_file_invalid_yaml(self, tmp_path):
         """Test that invalid YAML raises appropriate error."""
         yaml_content = """
         invalid: yaml: content
         [ unmatched
         """
-        
+
         plugins_file = tmp_path / "plugins-list.yaml"
         plugins_file.write_text(yaml_content)
-        
+
         with pytest.raises(yaml.YAMLError):
             PluginListConfig.from_file(plugins_file)
-    
+
     def test_from_file_nonexistent_file(self, tmp_path):
         """Test that nonexistent file raises FileNotFoundError."""
         plugins_file = tmp_path / "nonexistent.yaml"
-        
+
         with pytest.raises(FileNotFoundError):
             PluginListConfig.from_file(plugins_file)
 
 
 class TestPluginListConfigGetPlugins:
     """Tests for PluginListConfig.get_plugins method."""
-    
+
     def test_get_plugins_returns_copy(self):
         """Test that get_plugins returns a copy of the plugins dict."""
-        plugins_dict = {
-            "plugins/test1": "--arg1",
-            "plugins/test2": ""
-        }
-        
+        plugins_dict = {"plugins/test1": "--arg1", "plugins/test2": ""}
+
         config = PluginListConfig(plugins_dict)
         retrieved_plugins = config.get_plugins()
-        
+
         # Modify the retrieved dict
         retrieved_plugins["plugins/test3"] = "--arg3"
-        
+
         # Original should be unchanged
         assert "plugins/test3" not in config.plugins
         assert len(config.plugins) == 2
@@ -105,56 +105,53 @@ class TestPluginListConfigGetPlugins:
 
 class TestPluginListConfigAddPlugin:
     """Tests for PluginListConfig.add_plugin method."""
-    
+
     def test_add_plugin_new(self):
         """Test adding a new plugin."""
         config = PluginListConfig({})
-        
+
         config.add_plugin("plugins/test", "--arg1 --arg2")
-        
+
         assert "plugins/test" in config.plugins
         assert config.plugins["plugins/test"] == "--arg1 --arg2"
-    
+
     def test_add_plugin_with_empty_args(self):
         """Test adding a plugin with empty build args."""
         config = PluginListConfig({})
-        
+
         config.add_plugin("plugins/test")
-        
+
         assert "plugins/test" in config.plugins
         assert config.plugins["plugins/test"] == ""
-    
+
     def test_add_plugin_overwrites_existing(self):
         """Test that adding an existing plugin overwrites it."""
         config = PluginListConfig({"plugins/test": "--old-arg"})
-        
+
         config.add_plugin("plugins/test", "--new-arg")
-        
+
         assert config.plugins["plugins/test"] == "--new-arg"
 
 
 class TestPluginListConfigRemovePlugin:
     """Tests for PluginListConfig.remove_plugin method."""
-    
+
     def test_remove_plugin_existing(self):
         """Test removing an existing plugin."""
-        config = PluginListConfig({
-            "plugins/test1": "--arg1",
-            "plugins/test2": "--arg2"
-        })
-        
+        config = PluginListConfig({"plugins/test1": "--arg1", "plugins/test2": "--arg2"})
+
         config.remove_plugin("plugins/test1")
-        
+
         assert "plugins/test1" not in config.plugins
         assert "plugins/test2" in config.plugins
-    
+
     def test_remove_plugin_nonexistent(self):
         """Test that removing nonexistent plugin doesn't raise error."""
         config = PluginListConfig({"plugins/test1": "--arg1"})
-        
+
         # Should not raise
         config.remove_plugin("plugins/nonexistent")
-        
+
         # Original plugin should still be there
         assert "plugins/test1" in config.plugins
 
@@ -164,10 +161,12 @@ class TestPluginListConfigToFile:
 
     def test_to_file_with_args(self, tmp_path):
         """Test writing plugins with build args."""
-        config = PluginListConfig({
-            "plugins/ecs/frontend": "",
-            "plugins/ecs/backend": "--embed-package @aws/aws-core-plugin-for-backstage-common",
-        })
+        config = PluginListConfig(
+            {
+                "plugins/ecs/frontend": "",
+                "plugins/ecs/backend": "--embed-package @aws/aws-core-plugin-for-backstage-common",
+            }
+        )
         out = tmp_path / "plugins-list.yaml"
         config.to_file(out)
 
@@ -185,11 +184,13 @@ class TestPluginListConfigToFile:
 
     def test_to_file_roundtrip(self, tmp_path):
         """Test that to_file output can be read back by from_file."""
-        original = PluginListConfig({
-            "plugins/todo": "",
-            "plugins/todo-backend": "",
-            "plugins/ecs/backend": "--embed-package @aws/common --embed-package @aws/node",
-        })
+        original = PluginListConfig(
+            {
+                "plugins/todo": "",
+                "plugins/todo-backend": "",
+                "plugins/ecs/backend": "--embed-package @aws/common --embed-package @aws/node",
+            }
+        )
         out = tmp_path / "plugins-list.yaml"
         original.to_file(out)
 
@@ -209,9 +210,11 @@ class TestPluginListConfigToFile:
 
     def test_to_file_roundtrip_dot_key(self, tmp_path):
         """Test that '.' as a plugin key survives a to_file -> from_file roundtrip."""
-        original = PluginListConfig({
-            ".": "--embed-package @backstage/new-pkg",
-        })
+        original = PluginListConfig(
+            {
+                ".": "--embed-package @backstage/new-pkg",
+            }
+        )
         out = tmp_path / "plugins-list.yaml"
         original.to_file(out)
 
@@ -239,8 +242,7 @@ def _make_plugin_dir(base, rel_path, name, role, dependencies=None):
     return plugin_dir
 
 
-def _make_node_module(base, dep_name, dependencies=None,
-                      optional_dependencies=None):
+def _make_node_module(base, dep_name, dependencies=None, optional_dependencies=None):
     """Helper to create a workspace-root node_modules/<dep>/package.json entry."""
     nm_dir = base / "node_modules" / dep_name
     nm_dir.mkdir(parents=True, exist_ok=True)
@@ -258,7 +260,12 @@ class TestPluginListConfigCreateDefault:
 
     def test_discovers_backend_plugin(self, tmp_path):
         """Test discovering a backend plugin."""
-        _make_plugin_dir(tmp_path, "plugins/todo-backend", "@backstage/plugin-todo-backend", "backend-plugin")
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/todo-backend",
+            "@backstage/plugin-todo-backend",
+            "backend-plugin",
+        )
 
         config = PluginListConfig.create_default(tmp_path)
         plugins = config.get_plugins()
@@ -276,8 +283,18 @@ class TestPluginListConfigCreateDefault:
 
     def test_discovers_plugin_modules(self, tmp_path):
         """Test discovering frontend and backend plugin modules."""
-        _make_plugin_dir(tmp_path, "plugins/auth-backend-module-github", "@backstage/plugin-auth-backend-module-github", "backend-plugin-module")
-        _make_plugin_dir(tmp_path, "plugins/catalog-react-module", "@backstage/plugin-catalog-react-module", "frontend-plugin-module")
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/auth-backend-module-github",
+            "@backstage/plugin-auth-backend-module-github",
+            "backend-plugin-module",
+        )
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/catalog-react-module",
+            "@backstage/plugin-catalog-react-module",
+            "frontend-plugin-module",
+        )
 
         config = PluginListConfig.create_default(tmp_path)
         plugins = config.get_plugins()
@@ -287,8 +304,18 @@ class TestPluginListConfigCreateDefault:
 
     def test_ignores_non_plugin_roles(self, tmp_path):
         """Test that packages with roles like 'node-library' or 'common-library' are skipped."""
-        _make_plugin_dir(tmp_path, "packages/backend-defaults", "@backstage/backend-defaults", "node-library")
-        _make_plugin_dir(tmp_path, "packages/catalog-common", "@backstage/catalog-common", "common-library")
+        _make_plugin_dir(
+            tmp_path,
+            "packages/backend-defaults",
+            "@backstage/backend-defaults",
+            "node-library",
+        )
+        _make_plugin_dir(
+            tmp_path,
+            "packages/catalog-common",
+            "@backstage/catalog-common",
+            "common-library",
+        )
 
         config = PluginListConfig.create_default(tmp_path)
 
@@ -308,10 +335,14 @@ class TestPluginListConfigCreateDefault:
         """Test that plugins inside node_modules are not discovered."""
         nm = tmp_path / "node_modules" / "@backstage" / "plugin-todo"
         nm.mkdir(parents=True)
-        (nm / "package.json").write_text(json.dumps({
-            "name": "@backstage/plugin-todo",
-            "backstage": {"role": "frontend-plugin"},
-        }))
+        (nm / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "@backstage/plugin-todo",
+                    "backstage": {"role": "frontend-plugin"},
+                }
+            )
+        )
 
         config = PluginListConfig.create_default(tmp_path)
 
@@ -321,10 +352,14 @@ class TestPluginListConfigCreateDefault:
         """Test that plugins inside hidden directories are not discovered."""
         hidden = tmp_path / ".hidden" / "plugin-todo"
         hidden.mkdir(parents=True)
-        (hidden / "package.json").write_text(json.dumps({
-            "name": "@test/plugin-todo",
-            "backstage": {"role": "frontend-plugin"},
-        }))
+        (hidden / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "@test/plugin-todo",
+                    "backstage": {"role": "frontend-plugin"},
+                }
+            )
+        )
 
         config = PluginListConfig.create_default(tmp_path)
 
@@ -335,10 +370,14 @@ class TestPluginListConfigCreateDefault:
         for d in ["dist", "dist-dynamic"]:
             dist = tmp_path / d / "plugin-todo"
             dist.mkdir(parents=True)
-            (dist / "package.json").write_text(json.dumps({
-                "name": "@test/plugin-todo",
-                "backstage": {"role": "frontend-plugin"},
-            }))
+            (dist / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@test/plugin-todo",
+                        "backstage": {"role": "frontend-plugin"},
+                    }
+                )
+            )
 
         config = PluginListConfig.create_default(tmp_path)
 
@@ -389,8 +428,18 @@ class TestPluginListConfigCreateDefault:
 
     def test_todo_workspace_structure(self, tmp_path):
         """Test a workspace matching the community-plugins todo example."""
-        _make_plugin_dir(tmp_path, "plugins/todo", "@backstage-community/plugin-todo", "frontend-plugin")
-        _make_plugin_dir(tmp_path, "plugins/todo-backend", "@backstage-community/plugin-todo-backend", "backend-plugin")
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/todo",
+            "@backstage-community/plugin-todo",
+            "frontend-plugin",
+        )
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/todo-backend",
+            "@backstage-community/plugin-todo-backend",
+            "backend-plugin",
+        )
 
         config = PluginListConfig.create_default(tmp_path)
         plugins = config.get_plugins()
@@ -399,9 +448,24 @@ class TestPluginListConfigCreateDefault:
 
     def test_aws_ecs_workspace_structure(self, tmp_path):
         """Test a workspace matching the AWS ECS plugins example (nested dirs)."""
-        _make_plugin_dir(tmp_path, "plugins/ecs/frontend", "@aws/amazon-ecs-plugin-for-backstage", "frontend-plugin")
-        _make_plugin_dir(tmp_path, "plugins/ecs/backend", "@aws/amazon-ecs-plugin-for-backstage-backend", "backend-plugin")
-        _make_plugin_dir(tmp_path, "plugins/ecs/common", "@aws/aws-core-plugin-for-backstage-common", "common-library")
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/ecs/frontend",
+            "@aws/amazon-ecs-plugin-for-backstage",
+            "frontend-plugin",
+        )
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/ecs/backend",
+            "@aws/amazon-ecs-plugin-for-backstage-backend",
+            "backend-plugin",
+        )
+        _make_plugin_dir(
+            tmp_path,
+            "plugins/ecs/common",
+            "@aws/aws-core-plugin-for-backstage-common",
+            "common-library",
+        )
 
         config = PluginListConfig.create_default(tmp_path)
         plugins = config.get_plugins()
@@ -472,17 +536,14 @@ class TestParseHostPackages:
 
     def test_single_backstage_entry(self, tmp_path):
         lockfile = tmp_path / "yarn.lock"
-        lockfile.write_text(
-            '"@backstage/catalog-model@npm:^1.7.2":\n  version: 1.7.2\n'
-        )
+        lockfile.write_text('"@backstage/catalog-model@npm:^1.7.2":\n  version: 1.7.2\n')
         result = PluginListConfig._parse_host_packages(lockfile)
         assert "@backstage/catalog-model" in result
 
     def test_multi_version_entry(self, tmp_path):
         lockfile = tmp_path / "yarn.lock"
         lockfile.write_text(
-            '"@backstage/catalog-model@npm:^1.7.2, @backstage/catalog-model@npm:^1.7.3":\n'
-            "  version: 1.9.0\n"
+            '"@backstage/catalog-model@npm:^1.7.2, @backstage/catalog-model@npm:^1.7.3":\n  version: 1.9.0\n'
         )
         result = PluginListConfig._parse_host_packages(lockfile)
         assert result == {"@backstage/catalog-model"}
@@ -499,8 +560,7 @@ class TestParseHostPackages:
     def test_non_backstage_scoped_packages_included(self, tmp_path):
         lockfile = tmp_path / "yarn.lock"
         lockfile.write_text(
-            '"@aws/sdk@npm:^1.0.0":\n  version: 1.0.0\n\n'
-            '"@backstage/errors@npm:^1.2.7":\n  version: 1.2.7\n'
+            '"@aws/sdk@npm:^1.0.0":\n  version: 1.0.0\n\n"@backstage/errors@npm:^1.2.7":\n  version: 1.2.7\n'
         )
         result = PluginListConfig._parse_host_packages(lockfile)
         assert result == {"@aws/sdk", "@backstage/errors"}
@@ -526,8 +586,8 @@ class TestParseHostPackages:
         lockfile = tmp_path / "yarn.lock"
         lockfile.write_text(
             '"@some/package@npm:^1.0.0":\n'
-            '  version: 1.0.0\n'
-            '  dependencies:\n'
+            "  version: 1.0.0\n"
+            "  dependencies:\n"
             '    "@backstage/types": "npm:^1.2.1"\n'
             '    better-sqlite3: "npm:^12.0.0"\n'
         )
@@ -539,34 +599,24 @@ class TestGetSiblingNames:
     """Tests for PluginListConfig._get_sibling_names."""
 
     def test_backend_plugin(self):
-        result = PluginListConfig._get_sibling_names(
-            "@scope/my-plugin-backend", "backend-plugin"
-        )
+        result = PluginListConfig._get_sibling_names("@scope/my-plugin-backend", "backend-plugin")
         assert result == {"@scope/my-plugin-common", "@scope/my-plugin-node"}
 
     def test_backend_plugin_module(self):
-        result = PluginListConfig._get_sibling_names(
-            "@scope/my-plugin-backend-module-github", "backend-plugin-module"
-        )
+        result = PluginListConfig._get_sibling_names("@scope/my-plugin-backend-module-github", "backend-plugin-module")
         assert result == {"@scope/my-plugin-common", "@scope/my-plugin-node"}
 
     def test_frontend_plugin_returns_empty(self):
-        result = PluginListConfig._get_sibling_names(
-            "@scope/my-plugin", "frontend-plugin"
-        )
+        result = PluginListConfig._get_sibling_names("@scope/my-plugin", "frontend-plugin")
         assert result == set()
 
     def test_frontend_plugin_module_returns_empty(self):
-        result = PluginListConfig._get_sibling_names(
-            "@scope/my-plugin-module", "frontend-plugin-module"
-        )
+        result = PluginListConfig._get_sibling_names("@scope/my-plugin-module", "frontend-plugin-module")
         assert result == set()
 
     def test_name_without_matching_suffix(self):
         """If the name doesn't end with -backend, no siblings are derived."""
-        result = PluginListConfig._get_sibling_names(
-            "@scope/weird-name", "backend-plugin"
-        )
+        result = PluginListConfig._get_sibling_names("@scope/weird-name", "backend-plugin")
         assert result == set()
 
     def test_scoped_package_preserves_scope(self):
@@ -596,7 +646,8 @@ class TestResolveNodeModule:
     def test_scoped_package(self, tmp_path):
         _make_node_module(tmp_path, "@aws/aws-core-plugin-for-backstage-common")
         result = PluginListConfig._resolve_node_module_package_json(
-            tmp_path, "@aws/aws-core-plugin-for-backstage-common",
+            tmp_path,
+            "@aws/aws-core-plugin-for-backstage-common",
         )
         assert result is not None
 
@@ -607,18 +658,23 @@ class TestComputeBackendBuildArgs:
     def test_dep_with_backstage_sub_deps_in_host(self, tmp_path):
         """Third-party dep has @backstage/* sub-deps in host -> embed only, no unshare."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@aws/common": "^1.0.0", "@backstage/core": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "@aws/common",
+            tmp_path,
+            "@aws/common",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
 
         host = {"@backstage/catalog-model", "@backstage/core"}
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", host,
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            host,
         )
         assert "--embed-package @aws/common" in result
         assert "--shared-package" not in result
@@ -626,17 +682,22 @@ class TestComputeBackendBuildArgs:
     def test_dep_with_backstage_sub_deps_not_in_host(self, tmp_path):
         """Third-party dep has @backstage/* sub-deps NOT in host -> embed + unshare."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@custom/lib": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "@custom/lib",
+            tmp_path,
+            "@custom/lib",
             dependencies={"@backstage/new-pkg": "^1.0.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", {"@backstage/core"},
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            {"@backstage/core"},
         )
         assert "--embed-package @custom/lib" in result
         assert "--shared-package !@backstage/new-pkg" in result
@@ -644,49 +705,62 @@ class TestComputeBackendBuildArgs:
     def test_no_backstage_sub_deps(self, tmp_path):
         """Third-party dep with no @backstage/* sub-deps -> no args."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"lodash": "^4.0.0"},
         )
         _make_node_module(
-            tmp_path, "lodash",
+            tmp_path,
+            "lodash",
             dependencies={"underscore": "^1.0.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert result == ""
 
     def test_sibling_deps_skipped(self, tmp_path):
         """Sibling deps (-common, -node) are not embedded even if they have @backstage/* sub-deps."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-plugin-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-plugin-backend",
+            "backend-plugin",
             dependencies={
                 "@test/my-plugin-common": "^1.0.0",
                 "@test/my-plugin-node": "^1.0.0",
             },
         )
         _make_node_module(
-            tmp_path, "@test/my-plugin-common",
+            tmp_path,
+            "@test/my-plugin-common",
             dependencies={"@backstage/catalog-model": "^1.0.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert result == ""
 
     def test_backstage_direct_dep_missing_from_host(self, tmp_path):
         """@backstage/* direct dep NOT in host -> embed + unshare."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
+            tmp_path,
             tmp_path / "plugins/backend/package.json",
             {"@backstage/core", "@backstage/errors"},
         )
@@ -696,12 +770,15 @@ class TestComputeBackendBuildArgs:
     def test_backstage_direct_dep_present_in_host(self, tmp_path):
         """@backstage/* direct dep in host -> no action (it stays shared)."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
+            tmp_path,
             tmp_path / "plugins/backend/package.json",
             {"@backstage/catalog-model"},
         )
@@ -710,7 +787,10 @@ class TestComputeBackendBuildArgs:
     def test_mixed_scenario(self, tmp_path):
         """Multiple deps with different outcomes combined correctly."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-plugin-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-plugin-backend",
+            "backend-plugin",
             dependencies={
                 "@backstage/catalog-model": "^1.7.0",
                 "@backstage/new-pkg": "^0.1.0",
@@ -720,15 +800,20 @@ class TestComputeBackendBuildArgs:
             },
         )
         _make_node_module(
-            tmp_path, "@custom/lib",
-            dependencies={"@backstage/errors": "^1.2.0", "@backstage/missing": "^0.1.0"},
+            tmp_path,
+            "@custom/lib",
+            dependencies={
+                "@backstage/errors": "^1.2.0",
+                "@backstage/missing": "^0.1.0",
+            },
         )
         _make_node_module(tmp_path, "lodash")
 
         host = {"@backstage/catalog-model", "@backstage/errors"}
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", host,
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            host,
         )
         assert "--embed-package @backstage/new-pkg" in result
         assert "--embed-package @custom/lib" in result
@@ -740,20 +825,27 @@ class TestComputeBackendBuildArgs:
     def test_unresolvable_dep_skipped(self, tmp_path):
         """Dep not found in node_modules is silently skipped."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@missing/package": "^1.0.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert result == ""
 
     def test_malformed_dep_package_json_skipped(self, tmp_path):
         """Dep with invalid package.json in node_modules is skipped."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"bad-dep": "^1.0.0"},
         )
         nm_dir = tmp_path / "node_modules/bad-dep"
@@ -761,8 +853,9 @@ class TestComputeBackendBuildArgs:
         (nm_dir / "package.json").write_text("{ broken json")
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert result == ""
 
@@ -773,7 +866,8 @@ class TestGatherBackstageDeps:
     def test_direct_backstage_dep(self, tmp_path):
         """A dep that directly depends on @backstage/* finds it."""
         _make_node_module(
-            tmp_path, "some-lib",
+            tmp_path,
+            "some-lib",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
 
@@ -783,11 +877,13 @@ class TestGatherBackstageDeps:
     def test_deep_transitive_backstage_dep(self, tmp_path):
         """@backstage/* found two levels deep is still detected."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
 
@@ -797,15 +893,18 @@ class TestGatherBackstageDeps:
     def test_three_levels_deep(self, tmp_path):
         """@backstage/* found three levels deep is detected."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={"dep-c": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-c",
+            tmp_path,
+            "dep-c",
             dependencies={"@backstage/errors": "^1.2.0"},
         )
 
@@ -815,14 +914,16 @@ class TestGatherBackstageDeps:
     def test_multiple_backstage_at_different_depths(self, tmp_path):
         """@backstage/* packages at multiple depths are all collected."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={
                 "@backstage/catalog-model": "^1.7.0",
                 "dep-b": "^1.0.0",
             },
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={"@backstage/errors": "^1.2.0"},
         )
 
@@ -832,7 +933,8 @@ class TestGatherBackstageDeps:
     def test_no_backstage_deps(self, tmp_path):
         """Dep tree with no @backstage/* returns empty set."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(tmp_path, "dep-b")
@@ -843,11 +945,13 @@ class TestGatherBackstageDeps:
     def test_does_not_recurse_into_backstage(self, tmp_path):
         """Walk stops at @backstage/* nodes -- does not read their deps."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
         _make_node_module(
-            tmp_path, "@backstage/catalog-model",
+            tmp_path,
+            "@backstage/catalog-model",
             dependencies={"@backstage/errors": "^1.2.0"},
         )
 
@@ -858,11 +962,13 @@ class TestGatherBackstageDeps:
     def test_cycle_avoidance(self, tmp_path):
         """Circular deps don't cause infinite recursion."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={
                 "dep-a": "^1.0.0",
                 "@backstage/config": "^1.0.0",
@@ -875,7 +981,8 @@ class TestGatherBackstageDeps:
     def test_unresolvable_dep_skipped(self, tmp_path):
         """Missing packages in node_modules are silently skipped."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"nonexistent": "^1.0.0"},
         )
 
@@ -885,11 +992,13 @@ class TestGatherBackstageDeps:
     def test_optional_dep_with_backstage(self, tmp_path):
         """@backstage/* found via optionalDependencies is detected."""
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             optional_dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={"@backstage/types": "^1.0.0"},
         )
 
@@ -903,22 +1012,28 @@ class TestComputeBackendBuildArgsDeepTransitive:
     def test_deep_transitive_triggers_embed(self, tmp_path):
         """dep-a -> dep-b -> @backstage/catalog-model triggers embed for dep-a."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"dep-a": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
 
         host = {"@backstage/catalog-model"}
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", host,
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            host,
         )
         assert "--embed-package dep-a" in result
         assert "--shared-package" not in result
@@ -926,21 +1041,27 @@ class TestComputeBackendBuildArgsDeepTransitive:
     def test_deep_transitive_missing_from_host(self, tmp_path):
         """Deep @backstage/* dep not in host triggers both embed and unshare."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"dep-a": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert "--embed-package dep-a" in result
         assert "--shared-package !@backstage/new-experimental" in result
@@ -948,22 +1069,28 @@ class TestComputeBackendBuildArgsDeepTransitive:
     def test_no_deep_backstage_no_embed(self, tmp_path):
         """Deep deps without @backstage/* produce no embed args."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"dep-a": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-a",
+            tmp_path,
+            "dep-a",
             dependencies={"dep-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "dep-b",
+            tmp_path,
+            "dep-b",
             dependencies={"lodash": "^4.0.0"},
         )
         _make_node_module(tmp_path, "lodash")
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert result == ""
 
@@ -984,19 +1111,24 @@ class TestDiscoverThenPopulateBuildArgs:
         workspace.mkdir()
 
         _make_plugin_dir(
-            workspace, "plugins/ecs/frontend",
-            "@aws/amazon-ecs-plugin-for-backstage", "frontend-plugin",
+            workspace,
+            "plugins/ecs/frontend",
+            "@aws/amazon-ecs-plugin-for-backstage",
+            "frontend-plugin",
         )
         _make_plugin_dir(
-            workspace, "plugins/ecs/backend",
-            "@aws/amazon-ecs-plugin-for-backstage-backend", "backend-plugin",
+            workspace,
+            "plugins/ecs/backend",
+            "@aws/amazon-ecs-plugin-for-backstage-backend",
+            "backend-plugin",
             dependencies={
                 "@aws/aws-core-plugin-for-backstage-common": "^0.2.0",
                 "@backstage/catalog-model": "^1.7.0",
             },
         )
         _make_node_module(
-            workspace, "@aws/aws-core-plugin-for-backstage-common",
+            workspace,
+            "@aws/aws-core-plugin-for-backstage-common",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
 
@@ -1020,13 +1152,17 @@ class TestDiscoverThenPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/my-backend",
-            "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/my-backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
         _make_plugin_dir(
-            workspace, "plugins/todo",
-            "@backstage-community/plugin-todo", "frontend-plugin",
+            workspace,
+            "plugins/todo",
+            "@backstage-community/plugin-todo",
+            "frontend-plugin",
         )
 
         config = PluginListConfig.create_default(workspace)
@@ -1042,8 +1178,10 @@ class TestDiscoverThenPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/my-backend",
-            "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/my-backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
 
@@ -1057,15 +1195,15 @@ class TestDiscoverThenPopulateBuildArgs:
 
     def test_missing_host_lockfile_still_works(self, tmp_path, monkeypatch):
         """When host lockfile is missing, all @backstage/* deps are treated as absent."""
-        monkeypatch.setattr(
-            constants, "HOST_LOCKFILE", tmp_path / "nonexistent.lock"
-        )
+        monkeypatch.setattr(constants, "HOST_LOCKFILE", tmp_path / "nonexistent.lock")
 
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/backend",
-            "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
 
@@ -1082,42 +1220,28 @@ class TestIsNativeModule:
     """Tests for PluginListConfig._is_native_module."""
 
     def test_bindings_dependency(self):
-        assert PluginListConfig._is_native_module(
-            {"dependencies": {"bindings": "^1.5.0"}}
-        )
+        assert PluginListConfig._is_native_module({"dependencies": {"bindings": "^1.5.0"}})
 
     def test_prebuild_dependency(self):
-        assert PluginListConfig._is_native_module(
-            {"dependencies": {"prebuild": "^1.0.0"}}
-        )
+        assert PluginListConfig._is_native_module({"dependencies": {"prebuild": "^1.0.0"}})
 
     def test_nan_dependency(self):
-        assert PluginListConfig._is_native_module(
-            {"dependencies": {"nan": "^2.0.0"}}
-        )
+        assert PluginListConfig._is_native_module({"dependencies": {"nan": "^2.0.0"}})
 
     def test_node_pre_gyp_dependency(self):
-        assert PluginListConfig._is_native_module(
-            {"dependencies": {"node-pre-gyp": "^0.15.0"}}
-        )
+        assert PluginListConfig._is_native_module({"dependencies": {"node-pre-gyp": "^0.15.0"}})
 
     def test_node_gyp_build_dependency(self):
-        assert PluginListConfig._is_native_module(
-            {"dependencies": {"node-gyp-build": "^4.0.0"}}
-        )
+        assert PluginListConfig._is_native_module({"dependencies": {"node-gyp-build": "^4.0.0"}})
 
     def test_gypfile_field(self):
         assert PluginListConfig._is_native_module({"gypfile": True})
 
     def test_binary_field(self):
-        assert PluginListConfig._is_native_module(
-            {"binary": {"module_name": "addon"}}
-        )
+        assert PluginListConfig._is_native_module({"binary": {"module_name": "addon"}})
 
     def test_non_native_package(self):
-        assert not PluginListConfig._is_native_module(
-            {"dependencies": {"lodash": "^4.0.0"}}
-        )
+        assert not PluginListConfig._is_native_module({"dependencies": {"lodash": "^4.0.0"}})
 
     def test_empty_package(self):
         assert not PluginListConfig._is_native_module({})
@@ -1132,11 +1256,13 @@ class TestGatherNativeModules:
     def test_finds_native_transitive_dep(self, tmp_path):
         """A private dep depends on a native module -> that module is found."""
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             dependencies={"cpu-features": "^0.0.9"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"node-gyp-build": "^4.0.0"},
         )
 
@@ -1145,7 +1271,8 @@ class TestGatherNativeModules:
 
     def test_no_native_deps(self, tmp_path):
         _make_node_module(
-            tmp_path, "lodash",
+            tmp_path,
+            "lodash",
             dependencies={"underscore": "^1.0.0"},
         )
         _make_node_module(tmp_path, "underscore")
@@ -1156,11 +1283,13 @@ class TestGatherNativeModules:
     def test_cycle_avoidance(self, tmp_path):
         """Circular dependencies don't cause infinite recursion."""
         _make_node_module(
-            tmp_path, "a",
+            tmp_path,
+            "a",
             dependencies={"b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "b",
+            tmp_path,
+            "b",
             dependencies={"a": "^1.0.0"},
         )
 
@@ -1174,7 +1303,8 @@ class TestGatherNativeModules:
     def test_direct_dep_is_native(self, tmp_path):
         """The private dep itself is native."""
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"node-gyp-build": "^4.0.0"},
         )
 
@@ -1184,15 +1314,18 @@ class TestGatherNativeModules:
     def test_multiple_native_deps(self, tmp_path):
         """Multiple native modules found across different branches."""
         _make_node_module(
-            tmp_path, "parent",
+            tmp_path,
+            "parent",
             dependencies={"native-a": "^1.0.0", "native-b": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "native-a",
+            tmp_path,
+            "native-a",
             dependencies={"nan": "^2.0.0"},
         )
         _make_node_module(
-            tmp_path, "native-b",
+            tmp_path,
+            "native-b",
             dependencies={"bindings": "^1.5.0"},
         )
 
@@ -1202,11 +1335,13 @@ class TestGatherNativeModules:
     def test_native_in_optional_dependencies(self, tmp_path):
         """Native modules reachable via optionalDependencies are found."""
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             optional_dependencies={"cpu-features": "~0.0.10"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"nan": "^2.19.0"},
         )
 
@@ -1216,17 +1351,20 @@ class TestGatherNativeModules:
     def test_mixed_deps_and_optional_deps(self, tmp_path):
         """Walker follows both dependencies and optionalDependencies."""
         _make_node_module(
-            tmp_path, "docker-modem",
+            tmp_path,
+            "docker-modem",
             dependencies={"readable-stream": "^3.0.0"},
             optional_dependencies={"ssh2": "^1.15.0"},
         )
         _make_node_module(tmp_path, "readable-stream")
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             optional_dependencies={"cpu-features": "~0.0.10"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"nan": "^2.19.0"},
         )
 
@@ -1240,57 +1378,73 @@ class TestComputeBackendBuildArgsWithNative:
     def test_native_not_in_host_suppressed(self, tmp_path):
         """Native dep NOT in host -> suppress it."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"ssh2": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             dependencies={"cpu-features": "^0.0.9"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"node-gyp-build": "^4.0.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert "--suppress-native-package cpu-features" in result
 
     def test_native_in_host_still_suppressed(self, tmp_path):
         """Native dep IN host -> still suppressed unconditionally."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"ssh2": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             dependencies={"cpu-features": "^0.0.9"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"node-gyp-build": "^4.0.0"},
         )
 
         host = {"cpu-features"}
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", host,
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            host,
         )
         assert "--suppress-native-package cpu-features" in result
 
     def test_no_native_deps_no_flags(self, tmp_path):
         """Private dep with no native transitive deps -> no suppress or share flags."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"lodash": "^4.0.0"},
         )
         _make_node_module(tmp_path, "lodash")
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert "--suppress-native-package" not in result
         assert "--shared-package" not in result
@@ -1298,29 +1452,36 @@ class TestComputeBackendBuildArgsWithNative:
     def test_combined_embed_and_suppress(self, tmp_path):
         """Embed, unshare, AND suppress flags all present."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={
                 "@custom/lib": "^1.0.0",
                 "ssh2": "^1.0.0",
             },
         )
         _make_node_module(
-            tmp_path, "@custom/lib",
+            tmp_path,
+            "@custom/lib",
             dependencies={"@backstage/catalog-model": "^1.7.0"},
         )
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             dependencies={"cpu-features": "^0.0.9"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"node-gyp-build": "^4.0.0"},
         )
 
         host = {"@backstage/catalog-model"}
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", host,
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            host,
         )
         assert "--embed-package @custom/lib" in result
         assert "--suppress-native-package cpu-features" in result
@@ -1328,7 +1489,10 @@ class TestComputeBackendBuildArgsWithNative:
     def test_args_ordering_with_suppress(self, tmp_path):
         """Flags ordered: --embed, --shared-package !, --suppress-native-package."""
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={
                 "@backstage/new-pkg": "^0.1.0",
                 "@custom/lib": "^1.0.0",
@@ -1336,26 +1500,31 @@ class TestComputeBackendBuildArgsWithNative:
             },
         )
         _make_node_module(
-            tmp_path, "@custom/lib",
+            tmp_path,
+            "@custom/lib",
             dependencies={"@backstage/missing": "^0.1.0"},
         )
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             dependencies={"cpu-features": "^0.0.9"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"node-gyp-build": "^4.0.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         embed_idx = result.index("--embed-package")
         shared_idx = result.index("--shared-package !")
         suppress_idx = result.index("--suppress-native-package")
         assert embed_idx < shared_idx < suppress_idx
+
 
 class TestComputeBackendBuildArgsEmbeddedBackstageNative:
     """Native modules in embedded @backstage/* deps should be suppressed."""
@@ -1367,33 +1536,42 @@ class TestComputeBackendBuildArgsEmbeddedBackstageNative:
         -> ssh2 -[optional]-> cpu-features (native).
         """
         _make_plugin_dir(
-            tmp_path, "plugins/backend", "@test/my-backend", "backend-plugin",
+            tmp_path,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/backend-common": "^1.0.0"},
         )
         _make_node_module(
-            tmp_path, "@backstage/backend-common",
+            tmp_path,
+            "@backstage/backend-common",
             dependencies={"dockerode": "^4.0.0"},
         )
         _make_node_module(
-            tmp_path, "dockerode",
+            tmp_path,
+            "dockerode",
             dependencies={"docker-modem": "^3.0.0"},
         )
         _make_node_module(
-            tmp_path, "docker-modem",
+            tmp_path,
+            "docker-modem",
             optional_dependencies={"ssh2": "^1.15.0"},
         )
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             optional_dependencies={"cpu-features": "~0.0.10"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"nan": "^2.19.0"},
         )
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/backend",
-            tmp_path / "plugins/backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/backend/package.json",
+            set(),
         )
         assert "--embed-package @backstage/backend-common" in result
         assert "--shared-package !@backstage/backend-common" in result
@@ -1408,38 +1586,46 @@ class TestComputeBackendBuildArgsSiblingNative:
         sibling techdocs-node -> dockerode -> docker-modem -> ssh2 -> cpu-features.
         """
         _make_plugin_dir(
-            tmp_path, "plugins/techdocs-backend",
-            "@backstage/plugin-techdocs-backend", "backend-plugin",
+            tmp_path,
+            "plugins/techdocs-backend",
+            "@backstage/plugin-techdocs-backend",
+            "backend-plugin",
             dependencies={
                 "@backstage/plugin-techdocs-node": "workspace:^",
                 "express": "^4.22.0",
             },
         )
         _make_node_module(
-            tmp_path, "@backstage/plugin-techdocs-node",
+            tmp_path,
+            "@backstage/plugin-techdocs-node",
             dependencies={"dockerode": "^4.0.0"},
         )
         _make_node_module(
-            tmp_path, "dockerode",
+            tmp_path,
+            "dockerode",
             dependencies={"docker-modem": "^3.0.0"},
         )
         _make_node_module(
-            tmp_path, "docker-modem",
+            tmp_path,
+            "docker-modem",
             optional_dependencies={"ssh2": "^1.15.0"},
         )
         _make_node_module(
-            tmp_path, "ssh2",
+            tmp_path,
+            "ssh2",
             optional_dependencies={"cpu-features": "~0.0.10"},
         )
         _make_node_module(
-            tmp_path, "cpu-features",
+            tmp_path,
+            "cpu-features",
             dependencies={"nan": "^2.19.0"},
         )
         _make_node_module(tmp_path, "express")
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/techdocs-backend",
-            tmp_path / "plugins/techdocs-backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/techdocs-backend/package.json",
+            set(),
         )
         assert "--suppress-native-package cpu-features" in result
         assert "--embed-package" not in result
@@ -1447,42 +1633,50 @@ class TestComputeBackendBuildArgsSiblingNative:
     def test_sibling_without_native_deps_no_suppress(self, tmp_path):
         """Sibling with no native transitive deps produces no suppress flags."""
         _make_plugin_dir(
-            tmp_path, "plugins/todo-backend",
-            "@test/plugin-todo-backend", "backend-plugin",
+            tmp_path,
+            "plugins/todo-backend",
+            "@test/plugin-todo-backend",
+            "backend-plugin",
             dependencies={
                 "@test/plugin-todo-common": "^1.0.0",
                 "@test/plugin-todo-node": "^1.0.0",
             },
         )
         _make_node_module(
-            tmp_path, "@test/plugin-todo-common",
+            tmp_path,
+            "@test/plugin-todo-common",
             dependencies={"lodash": "^4.0.0"},
         )
         _make_node_module(
-            tmp_path, "@test/plugin-todo-node",
+            tmp_path,
+            "@test/plugin-todo-node",
             dependencies={"express": "^4.0.0"},
         )
         _make_node_module(tmp_path, "lodash")
         _make_node_module(tmp_path, "express")
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/todo-backend",
-            tmp_path / "plugins/todo-backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/todo-backend/package.json",
+            set(),
         )
         assert result == ""
 
     def test_sibling_not_in_node_modules_skipped(self, tmp_path):
         """Unresolvable sibling (not in node_modules) is silently skipped."""
         _make_plugin_dir(
-            tmp_path, "plugins/my-backend",
-            "@test/my-plugin-backend", "backend-plugin",
+            tmp_path,
+            "plugins/my-backend",
+            "@test/my-plugin-backend",
+            "backend-plugin",
             dependencies={"lodash": "^4.0.0"},
         )
         _make_node_module(tmp_path, "lodash")
 
         result = PluginListConfig._compute_backend_build_args(
-            tmp_path, "plugins/my-backend",
-            tmp_path / "plugins/my-backend/package.json", set(),
+            tmp_path,
+            tmp_path / "plugins/my-backend/package.json",
+            set(),
         )
         assert result == ""
 
@@ -1498,16 +1692,20 @@ class TestDiscoverThenPopulateWithNativeHandling:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/backend",
-            "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"ssh2": "^1.0.0"},
         )
         _make_node_module(
-            workspace, "ssh2",
+            workspace,
+            "ssh2",
             dependencies={"cpu-features": "^0.0.9"},
         )
         _make_node_module(
-            workspace, "cpu-features",
+            workspace,
+            "cpu-features",
             dependencies={"node-gyp-build": "^4.0.0"},
         )
 
@@ -1517,6 +1715,7 @@ class TestDiscoverThenPopulateWithNativeHandling:
         config.populate_build_args(workspace)
         args = config.get_plugins()["plugins/backend"]
         assert "--suppress-native-package cpu-features" in args
+
 
 class TestPluginListConfigPopulateBuildArgs:
     """Tests for PluginListConfig.populate_build_args method."""
@@ -1530,8 +1729,10 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/backend",
-            "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
 
@@ -1551,8 +1752,10 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/todo",
-            "@test/plugin-todo", "frontend-plugin",
+            workspace,
+            "plugins/todo",
+            "@test/plugin-todo",
+            "frontend-plugin",
         )
 
         cfg = PluginListConfig({"plugins/todo": ""})
@@ -1569,8 +1772,10 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/backend",
-            "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-pkg": "^0.1.0"},
         )
 
@@ -1605,9 +1810,7 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace.mkdir()
         pkg_dir = workspace / "plugins" / "no-role"
         pkg_dir.mkdir(parents=True)
-        (pkg_dir / "package.json").write_text(
-            json.dumps({"name": "@test/no-role", "version": "1.0.0"})
-        )
+        (pkg_dir / "package.json").write_text(json.dumps({"name": "@test/no-role", "version": "1.0.0"}))
 
         cfg = PluginListConfig({"plugins/no-role": ""})
         cfg.populate_build_args(workspace)
@@ -1623,20 +1826,26 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/backend",
-            "@test/my-backend", "backend-plugin",
+            workspace,
+            "plugins/backend",
+            "@test/my-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-pkg": "^0.1.0"},
         )
         _make_plugin_dir(
-            workspace, "plugins/frontend",
-            "@test/my-frontend", "frontend-plugin",
+            workspace,
+            "plugins/frontend",
+            "@test/my-frontend",
+            "frontend-plugin",
         )
 
-        cfg = PluginListConfig({
-            "plugins/backend": "",
-            "plugins/frontend": "",
-            "plugins/missing": "--old",
-        })
+        cfg = PluginListConfig(
+            {
+                "plugins/backend": "",
+                "plugins/frontend": "",
+                "plugins/missing": "--old",
+            }
+        )
         cfg.populate_build_args(workspace)
         plugins = cfg.get_plugins()
 
@@ -1653,12 +1862,16 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/todo",
-            "@test/plugin-todo", "frontend-plugin",
+            workspace,
+            "plugins/todo",
+            "@test/plugin-todo",
+            "frontend-plugin",
         )
         _make_plugin_dir(
-            workspace, "plugins/todo-backend",
-            "@test/plugin-todo-backend", "backend-plugin",
+            workspace,
+            "plugins/todo-backend",
+            "@test/plugin-todo-backend",
+            "backend-plugin",
             dependencies={"@backstage/new-experimental": "^0.1.0"},
         )
 
@@ -1684,8 +1897,10 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/todo",
-            "@test/plugin-todo", "frontend-plugin",
+            workspace,
+            "plugins/todo",
+            "@test/plugin-todo",
+            "frontend-plugin",
         )
 
         cfg = PluginListConfig({"plugins/todo": ""})
@@ -1701,8 +1916,10 @@ class TestPluginListConfigPopulateBuildArgs:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         _make_plugin_dir(
-            workspace, "plugins/simple-backend",
-            "@test/simple-backend", "backend-plugin",
+            workspace,
+            "plugins/simple-backend",
+            "@test/simple-backend",
+            "backend-plugin",
         )
 
         cfg = PluginListConfig({"plugins/simple-backend": ""})

@@ -50,8 +50,128 @@ def test_full_config_flow(self, make_config):
 - **Goal**: Validate that the container image works correctly with the provided `examples/`.
 - **Workflow**:
     1.  **Get Image**: Use a pre-built image from the registry (CI) or build locally (development).
-    2.  **Run**: Execute the container mounting a `tmp_path` copy of an `examples/` directory.
-    3.  **Verify**: Check the output directory (mounted volume) for expected artifacts (e.g., `.tgz` files, `plugins-list.yaml`).
+    2.  **Run**: Execute the container mounting config fixtures and a temp output directory.
+    3.  **Verify**: Check the output directory for expected artifacts (`.tgz`, `.tgz.integrity`, `plugins-list.yaml`).
+
+### Architecture
+
+All E2E infrastructure lives in `tests/e2e/conftest.py`:
+
+- **`ContainerResult`** dataclass: holds `returncode`, `output`, `output_dir`, and `log_file`.
+- **`run_factory_container`** (session fixture): returns a callable `_run(config_dir, extra_args, timeout)` that runs the container image, captures output, persists logs, and returns a `ContainerResult`.
+- **`PluginBuildTests`** base class: provides 6 standard test methods inherited by all single-workspace test classes. Expects two fixtures: `container_result` and `expected_plugins`.
+- **Helper functions**: `parse_plugins_from_config`, `find_outputs_for_plugin`, `get_output_tgz_files`, `get_output_integrity_files`, `assert_no_errors_in_logs`.
+
+### PluginBuildTests Base Class
+
+All single-workspace E2E tests inherit from `PluginBuildTests` (defined in `conftest.py`), which provides these test methods:
+
+- `test_container_exits_successfully` — returncode == 0
+- `test_no_errors_in_logs` — no known error patterns in output
+- `test_all_plugins_produce_tgz` — each plugin has a matching `.tgz`
+- `test_all_plugins_produce_integrity` — each plugin has a `.tgz.integrity`
+- `test_output_tarballs_are_nonzero` — all `.tgz` files have size > 0
+- `test_output_count_matches_plugins` — at least as many tgz files as listed plugins
+
+Subclasses must define two class-scoped fixtures with these exact names:
+
+- `container_result` -> `ContainerResult`
+- `expected_plugins` -> `list[str]`
+
+### Writing a New E2E Test
+
+1. Create fixture files under `tests/e2e/fixtures/<test-name>/` (source.json, plugins-list.yaml, patches, overlays as needed).
+2. Create `tests/e2e/test_<name>.py` with fixtures and a class inheriting `PluginBuildTests`.
+3. Add case-specific tests as additional methods on the subclass.
+
+**Standard single-workspace test** (simplest case):
+
+```python
+from .conftest import FIXTURES_DIR, ContainerResult, PluginBuildTests, parse_plugins_from_config
+
+MY_CONFIG_DIR = FIXTURES_DIR / "my-test" / "config"
+
+@pytest.fixture(scope="class")
+def container_result(run_factory_container) -> ContainerResult:
+    return run_factory_container(MY_CONFIG_DIR)
+
+@pytest.fixture(scope="class")
+def expected_plugins() -> list[str]:
+    return parse_plugins_from_config(MY_CONFIG_DIR)
+
+@pytest.mark.e2e
+class TestMyPlugin(PluginBuildTests):
+    pass  # inherits all 6 standard tests
+```
+
+**Build-arg auto-generation test** (container writes to config dir):
+
+```python
+@pytest.fixture(scope="class")
+def config_dir(tmp_path_factory):
+    dest = tmp_path_factory.mktemp("my-config")
+    shutil.copytree(FIXTURE_DIR, dest, dirs_exist_ok=True)
+    return dest
+
+@pytest.fixture(scope="class")
+def container_result(run_factory_container, config_dir) -> ContainerResult:
+    return run_factory_container(config_dir, extra_args=["--generate-build-args"])
+
+@pytest.fixture(scope="class")
+def expected_plugins(config_dir) -> list[str]:
+    return parse_plugins_from_config(config_dir)
+
+@pytest.mark.e2e
+class TestMyAutoGen(PluginBuildTests):
+    def test_generated_build_args_match_expected(self, config_dir):
+        generated = yaml.safe_load((config_dir / "plugins-list.yaml").read_text())
+        expected = yaml.safe_load((FIXTURE_DIR / "expected-plugins-list.yaml").read_text())
+        assert generated == expected
+```
+
+**CLI-only test** (no config files, uses CLI arguments):
+
+```python
+@pytest.fixture(scope="class")
+def config_dir(tmp_path_factory):
+    return tmp_path_factory.mktemp("cli-config")  # empty dir
+
+@pytest.fixture(scope="class")
+def container_result(run_factory_container, config_dir) -> ContainerResult:
+    return run_factory_container(config_dir, extra_args=[
+        "--source-repo", "https://github.com/...",
+        "--source-ref", "abc123",
+        "--workspace-path", "workspaces/my-plugin",
+    ])
+```
+
+**Multi-workspace test** (does NOT use `PluginBuildTests` — uses per-workspace parametrization):
+
+```python
+WORKSPACES = ["workspace-a", "workspace-b"]
+
+@pytest.fixture(scope="class")
+def multi_ws_result(run_factory_container) -> ContainerResult:
+    return run_factory_container(MULTI_WS_CONFIG_DIR)
+
+@pytest.mark.e2e
+class TestMultiWorkspace:
+    @pytest.mark.parametrize("workspace", WORKSPACES)
+    def test_workspace_produces_tgz(self, multi_ws_result, workspace):
+        plugins = parse_plugins_from_config(CONFIG_DIR / workspace)
+        tgz = get_output_tgz_files(multi_ws_result.output_dir / workspace)
+        for plugin in plugins:
+            assert find_outputs_for_plugin(plugin, tgz)
+```
+
+### Fixture File Conventions
+
+- **`source.json`**: repo URL, ref, workspace-path.
+- **`plugins-list.yaml`**: plugin paths with optional build args.
+- **`expected-plugins-list.yaml`**: expected output for auto-gen tests (name avoids detection by factory).
+- **`patches/`**: `.patch` files applied in alphabetical order.
+- **`plugins/<path>/overlay/`**: overlay files copied over source before build.
+- **`backstage.json`**: optional Backstage version override.
 
 ### Image Source Strategy
 
@@ -72,72 +192,14 @@ The container image is published to `quay.io/rhdh-community/dynamic-plugins-fact
 | Main branch | `{short_sha}` | `abc1234` |
 | Releases | `{version}-{release}`, `{version}`, `latest` | `1.8-0`, `1.8`, `latest` |
 
-### E2E Fixture Pattern
-
-```python
-import os
-import pytest
-import subprocess
-import shutil
-
-@pytest.fixture(scope="session")
-def factory_image():
-    """Get or build the factory image for E2E tests.
-    
-    Modes:
-    - CI (default): Uses E2E_IMAGE env var or falls back to latest
-    - Local: Set E2E_BUILD_LOCAL=true to build locally
-    
-    Returns:
-        str: The image tag to use for tests
-    """
-    if os.environ.get("E2E_BUILD_LOCAL") == "true":
-        # Local development: build image
-        tag = "rhdh-factory:local"
-        subprocess.run(["podman", "build", "-t", tag, "."], check=True)
-        return tag
-    
-    # CI/Default: use pre-built image
-    return os.environ.get(
-        "E2E_IMAGE",
-        "quay.io/rhdh-community/dynamic-plugins-factory:latest"
-    )
-
-@pytest.mark.e2e
-def test_example_config_aws_ecs(factory_image, tmp_path):
-    # Setup: Copy example to tmp_path
-    example_dir = tmp_path / "example"
-    shutil.copytree("examples/example-config-aws-ecs", example_dir)
-    
-    output_dir = tmp_path / "output"
-    output_dir.mkdir()
-
-    # Action: Run container
-    subprocess.run([
-        "podman", "run", "--rm",
-        "-v", f"{example_dir}:/config:z",
-        "-v", f"{output_dir}:/outputs:z",
-        factory_image
-    ], check=True)
-
-    # Assertion: Check outputs
-    assert (output_dir / "plugins-list.yaml").exists()
-```
-
 ### Running E2E Tests
 
 ```bash
 # Test against latest published image (default)
-pytest tests/e2e/ -m e2e
-
-# Test against specific version
-E2E_IMAGE=quay.io/rhdh-community/dynamic-plugins-factory:1.8-0 pytest tests/e2e/ -m e2e
+E2E_IMAGE=quay.io/rhdh-community/dynamic-plugins-factory:latest pytest tests/e2e/ -m e2e
 
 # Test against a PR image
 E2E_IMAGE=quay.io/rhdh-community/dynamic-plugins-factory:pr-123-abc1234 pytest tests/e2e/ -m e2e
-
-# Test with local build (for Dockerfile changes)
-E2E_BUILD_LOCAL=true pytest tests/e2e/ -m e2e
 ```
 
 ### CI Workflow Integration
