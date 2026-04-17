@@ -1,4 +1,4 @@
 # Core runtime dependencies
 PyYAML==6.0.3
 python-dotenv==1.2.2
-rich==14.3.4
+rich==15.0.0
