@@ -648,12 +648,15 @@ NOTE: If the repository name (ex: plugin-name-dynamic) in the namespace specifie
 
 The `examples` directory contains ready-to-use configuration examples demonstrating different use cases and features.
 
-| Example             | Description                                                   | Details                                                            |
-| ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| **TODO**            | Basic single-workspace with custom scalprum-config            | [View README](./examples/example-config-todo/README.md)            |
-| **GitLab**          | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/README.md)          |
-| **AWS ECS**         | Patches and embed packages in plugins-list.yaml               | [View README](./examples/example-config-aws-ecs/README.md)         |
-| **Multi-Workspace** | Multiple workspaces from different repos in a single run      | [View README](./examples/example-config-multi-workspace/README.md) |
+| Example                | Description                                                   | Details                                                               |
+| ---------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **TODO**               | Basic single-workspace with custom scalprum-config            | [View README](./examples/example-config-todo/README.md)               |
+| **GitLab**             | Overlays for non Backstage Community Plugins workspace format | [View README](./examples/example-config-gitlab/README.md)             |
+| **AWS ECS**            | Patches and embed packages in plugins-list.yaml               | [View README](./examples/example-config-aws-ecs/README.md)            |
+| **Backstage DevTools** | DevTools plugins from the main Backstage repository           | [View README](./examples/example-config-backstage-devtools/README.md) |
+| **Toolbox**            | Toolbox plugins with patches and a backend module             | [View README](./examples/example-config-toolbox/README.md)            |
+| **Usage Statistics**   | Usage Statistics plugins from a third-party repository        | [View README](./examples/example-config-usage-statistics/README.md)   |
+| **Multi-Workspace**    | Multiple workspaces from different repos in a single run      | [View README](./examples/example-config-multi-workspace/README.md)    |
 
 ### Quick Example: TODO Workspace
 
