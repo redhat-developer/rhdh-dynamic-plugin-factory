@@ -82,7 +82,7 @@ def run_command_with_streaming(
     return process.returncode
 
 
-def collect_build_logs(logger: Logger, tmp_dir: Path | None = None) -> None:
+def collect_build_logs(logger: Logger, tmp_dir: Path | None = None, *, has_errors: bool = False) -> None:
     """Find and display build log files left by failed native package builds.
 
     Scans a temp directory for build.log files (typically created by yarn when
@@ -92,6 +92,9 @@ def collect_build_logs(logger: Logger, tmp_dir: Path | None = None) -> None:
         logger: Logger instance to use for output.
         tmp_dir: Directory to scan for build.log files. Defaults to the
                  system temp directory (usually /tmp).
+        has_errors: Whether the preceding command failed. When True and no
+                    build logs are found, a warning is logged; otherwise
+                    the message is logged at debug level.
     """
     search_dir = tmp_dir or Path(tempfile.gettempdir())
 
@@ -102,7 +105,10 @@ def collect_build_logs(logger: Logger, tmp_dir: Path | None = None) -> None:
         return
 
     if not build_logs:
-        logger.warning(f"[yellow]No build logs found in {search_dir}[/yellow]")
+        if has_errors:
+            logger.warning(f"[yellow]No build logs found in {search_dir}[/yellow]")
+        else:
+            logger.debug(f"No build logs found in {search_dir}")
         return
 
     logger.warning(f"[yellow]Found {len(build_logs)} build log(s) that may contain details about the failure:[/yellow]")

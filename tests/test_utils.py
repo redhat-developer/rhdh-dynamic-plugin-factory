@@ -34,9 +34,17 @@ class TestCollectBuildLogs:
         assert any("xfs-aaa" in line and "Build log:" in line for line in logged_lines)
         assert any("xfs-bbb" in line and "Build log:" in line for line in logged_lines)
 
-    def test_no_build_logs_found(self, tmp_path, mock_logger):
-        """Test that a 'no build logs found' message is logged when none exist."""
+    def test_no_build_logs_logs_debug_by_default(self, tmp_path, mock_logger):
+        """Test that missing build logs are logged at debug level when there are no errors."""
         collect_build_logs(mock_logger, tmp_dir=tmp_path)
+
+        mock_logger.warning.assert_not_called()
+        mock_logger.debug.assert_called_once()
+        assert "No build logs found" in mock_logger.debug.call_args[0][0]
+
+    def test_no_build_logs_warns_when_has_errors(self, tmp_path, mock_logger):
+        """Test that missing build logs produce a warning when has_errors is True."""
+        collect_build_logs(mock_logger, tmp_dir=tmp_path, has_errors=True)
 
         mock_logger.warning.assert_called_once()
         assert "No build logs found" in mock_logger.warning.call_args[0][0]
