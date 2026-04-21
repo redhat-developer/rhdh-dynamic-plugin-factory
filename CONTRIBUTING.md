@@ -180,6 +180,7 @@ rhdh-dynamic-plugin-factory/
 ├── src/rhdh_dynamic_plugin_factory/
 │   ├── __init__.py              # Package initialization and public API
 │   ├── __main__.py              # Package entry point
+│   ├── __version__.py           # Package version definition
 │   ├── cli.py                   # CLI implementation and argument parsing
 │   ├── config.py                # Configuration classes and validation
 │   ├── constants.py             # Shared constants and configuration values
@@ -193,32 +194,51 @@ rhdh-dynamic-plugin-factory/
 │   └── override-sources.sh      # Patch/overlay application script
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py                          # Pytest fixtures and configuration
-│   ├── test_cli.py                          # CLI argument parsing tests
-│   ├── test_config_export_plugins.py        # Plugin export tests
-│   ├── test_config_load_from_env.py         # Environment loading tests
-│   ├── test_config_patches_and_overlays.py  # Patch/overlay tests
-│   ├── test_config_registry.py              # Registry configuration tests
-│   ├── test_multi_workspace.py              # Multi-workspace mode tests
-│   ├── test_plugin_list_config.py           # Plugin list and build-arg tests
-│   └── test_source_config.py                # Source configuration tests
+│   ├── conftest.py                             # Pytest fixtures and configuration
+│   ├── test_cli.py                             # CLI argument parsing tests
+│   ├── test_config_discover_and_build_args.py  # Plugin discovery and build-arg tests
+│   ├── test_config_export_plugins.py           # Plugin export tests
+│   ├── test_config_load_from_env.py            # Environment loading tests
+│   ├── test_config_patches_and_overlays.py     # Patch/overlay tests
+│   ├── test_config_registry.py                 # Registry configuration tests
+│   ├── test_multi_workspace.py                 # Multi-workspace mode tests
+│   ├── test_plugin_list_config.py              # Plugin list and build-arg tests
+│   ├── test_source_config.py                   # Source configuration tests
+│   └── test_utils.py                           # Utility function tests
 ├── examples/                    # Example configuration sets
 │   ├── example-config-todo/
 │   ├── example-config-gitlab/
 │   ├── example-config-aws-ecs/
+│   ├── example-config-backstage-devtools/
+│   ├── example-config-toolbox/
+│   ├── example-config-usage-statistics/
 │   └── example-config-multi-workspace/
+├── .github/                     # GitHub Actions CI/CD
+├── resources/
+│   ├── rhdh/yarn.lock           # RHDH yarn.lock used for dependency matching in `plugins-list.yaml` private dependency resolution
+│   └── metadata.json            # Package metadata
 ├── .cursor/rules/               # Development guidelines
 │   ├── commit-standards.mdc
+│   ├── development-workflow.mdc
 │   ├── documentation-standards.mdc
+│   ├── github-actions-workflow.mdc
+│   ├── integration-tests.mdc
 │   ├── planning-process.mdc
+│   ├── pytest-unit-tests.mdc
 │   ├── python-code-quality.mdc
 │   └── shell-code-quality.mdc
+├── .dockerignore                
+├── .gitignore                   
+├── CONTRIBUTING.md              # Contributor guidelines
 ├── default.env                  # Default environment settings
 ├── Dockerfile                   # Container image definition
-├── requirements.txt             # Python runtime dependencies
-├── requirements.dev.txt         # Python development dependencies
+├── LICENSE                      
+├── pyproject.toml               # Python project configuration
 ├── pytest.ini                   # Pytest configuration
-└── README.md                    # User documentation
+├── README.md                    # Main user documentation
+├── renovate.json                # Renovate dependency update configuration
+├── requirements.dev.txt         # Python development dependencies
+└── requirements.txt             # Python runtime dependencies
 ```
 
 ### Key Components

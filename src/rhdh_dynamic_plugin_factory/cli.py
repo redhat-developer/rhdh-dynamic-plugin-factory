@@ -182,7 +182,7 @@ def install_dependencies(workspace_path: Path) -> None:
             returncode = run_command_with_streaming(cmd, logger, cwd=workspace_path, env=env)
 
             if cmd[:2] == ["yarn", "install"]:
-                collect_build_logs(logger)
+                collect_build_logs(logger, has_errors=returncode != 0)
 
             if returncode != 0:
                 raise ExecutionError(
