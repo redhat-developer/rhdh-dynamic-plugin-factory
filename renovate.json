@@ -3,6 +3,7 @@
   "extends": [
     "config:recommended"
   ],
+  "baseBranchPatterns": ["main", "/^release-\\d+\\.\\d+$/"],
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
