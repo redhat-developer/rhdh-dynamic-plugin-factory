@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/nodejs-24-minimal:9.7-1778116980
+FROM registry.access.redhat.com/ubi9/nodejs-22-minimal:9.7-1778676353
 
 # Runtime requirements and usage documentation
 LABEL description="RHDH Dynamic Plugin Factory - Build and package Backstage plugins" \
