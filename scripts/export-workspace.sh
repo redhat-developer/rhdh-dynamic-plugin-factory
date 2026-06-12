@@ -89,15 +89,13 @@ if [[ "${skipWorkspace}" == "true" ]]
 then
     echo "Skipping workspace since it didn't change since last published commit (${INPUTS_LAST_PUBLISH_COMMIT})"
 else
-    if [[ -f "${workspaceOverlayFolder}/backstage.json" ]]
-    then
-        echo "Overriding backstage.json file before exporting plugins to override the supportedVersions package field."
-        if [[ -f "backstage.json" ]]
-        then
-            cp -fv "backstage.json" "backstage.json.save"
-            trap "mv -fv 'backstage.json.save' 'backstage.json'" EXIT
+    overlay_backstage_json="${workspaceOverlayFolder}/backstage.json"
+    overlay_supported_version=""
+    if [[ -f "$overlay_backstage_json" ]]; then
+        overlay_supported_version=$(jq -r '.version' "$overlay_backstage_json")
+        if [[ "$overlay_supported_version" == "null" ]]; then
+            overlay_supported_version=""
         fi
-        cp -fv "${workspaceOverlayFolder}/backstage.json" "backstage.json"
     fi
 
     # We use '|| [[ -n "$plugin" ]]' to catch the last line even if it lacks a newline.
@@ -120,6 +118,11 @@ else
         # shellcheck disable=SC2001
         args=$(echo "$plugin" | sed 's/^\(^[^:]*\): *\(.*\)$/\2/')
         
+        # check if folder exists; if not, skip this package
+        if [ ! -d "$pluginPath" ]; then
+            echo "Skip missing package folder $pluginPath"
+            continue
+        fi
         pushd "$pluginPath" > /dev/null
         
         if [[ "$(grep -e '"role" *: *"frontend-plugin' package.json)" != "" ]]
@@ -149,6 +152,14 @@ else
             set -e
             popd > /dev/null
             continue
+        fi
+
+        if [[ -n "$overlay_supported_version" ]] && [[ -f "dist-dynamic/package.json" ]]; then
+            echo "  Setting supported-versions to ${overlay_supported_version} from overlay backstage.json"
+            jq --arg ver "$overlay_supported_version" \
+               '.backstage["supported-versions"] = $ver' \
+               dist-dynamic/package.json > dist-dynamic/package.json.tmp \
+               && mv dist-dynamic/package.json.tmp dist-dynamic/package.json
         fi
         echo
 
