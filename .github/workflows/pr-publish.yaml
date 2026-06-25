@@ -79,9 +79,16 @@ jobs:
             echo "Error: Invalid all_tags format: $ALL_TAGS"
             exit 1
           fi
-          
+          # Reconstruct them from the validated PR_NUMBER/SHORT_SHA so this privileged  
+          PRIMARY_TAG="pr-${PR_NUMBER}"  
+          ALL_TAGS="${PRIMARY_TAG},pr-${PR_NUMBER}-${SHORT_SHA}"
           BUILD_SKIPPED=$(jq -r '.build_skipped // "false"' /tmp/pr-metadata/pr-info.json)
 
+          if ! [[ "$BUILD_SKIPPED" =~ ^(true|false)$ ]]; then  
+            echo "Error: Invalid build_skipped value: $BUILD_SKIPPED"
+            exit 1
+          fi
+          
           echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
           echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
