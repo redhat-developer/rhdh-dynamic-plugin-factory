@@ -1,7 +1,7 @@
 # Development and testing dependencies
 -r requirements.txt
 
-coverage==7.13.5
+coverage==7.15.0
 mypy==1.20.1
 pytest==9.0.3
 pytest-cov==7.1.0
