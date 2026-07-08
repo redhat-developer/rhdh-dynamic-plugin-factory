@@ -7,9 +7,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 env:
   REGISTRY: quay.io
   REGISTRY_IMAGE: rhdh-community/dynamic-plugins-factory
@@ -17,6 +14,8 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       should_skip: ${{ steps.skip_check.outputs.should_skip }}
       skip_reason: ${{ steps.skip_check.outputs.skip_reason }}
@@ -47,6 +46,8 @@ jobs:
     needs: check
     if: needs.check.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
