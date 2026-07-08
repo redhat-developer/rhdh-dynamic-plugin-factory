@@ -1,5 +1,7 @@
 # Python Caches
 **/__pycache__
+.ruff_cache/
+.venv/
 
 # Local Configuration Folders
 /config/

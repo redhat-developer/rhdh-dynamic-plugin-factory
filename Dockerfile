@@ -28,7 +28,11 @@ COPY requirements.txt .
 # Install Python Dependencies
 RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY resources/ ./resources/
+COPY default.env .
+COPY LICENSE .
 
 RUN mkdir -p /workspace /outputs /config
 
