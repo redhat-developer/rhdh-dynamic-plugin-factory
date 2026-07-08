@@ -40,7 +40,7 @@ class PluginFactoryConfig:
     # Registry configuration (loaded from environment variables, only required for push operations)
     registry_url: str | None = field(default=None)
     registry_username: str | None = field(default=None)
-    registry_password: str | None = field(default=None)
+    registry_password: str | None = field(default=None, repr=False)
     registry_namespace: str | None = field(default=None)
     registry_insecure: bool = field(default=False)
     registry_auth_file: str | None = field(default=None)
@@ -232,8 +232,7 @@ class PluginFactoryConfig:
                 "login",
                 "--username",
                 str(self.registry_username),
-                "--password",
-                str(self.registry_password),
+                "--password-stdin",
             ]
 
             if self.registry_insecure:
@@ -241,7 +240,12 @@ class PluginFactoryConfig:
 
             cmd.append(str(self.registry_url))
 
-            subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                input=str(self.registry_password).encode(),
+            )
             self.logger.info(f"Logged in to registry {self.registry_url} with buildah.")
         except subprocess.CalledProcessError as e:
             raise ExecutionError(

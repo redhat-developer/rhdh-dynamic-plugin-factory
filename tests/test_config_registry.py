@@ -21,6 +21,13 @@ from src.rhdh_dynamic_plugin_factory.exceptions import (
 class TestRegistryValidation:
     """Tests for _validate_registry_fields (called explicitly, not in __post_init__)."""
 
+    def test_registry_password_excluded_from_repr(self, make_config):
+        """registry_password value must not appear in object repr."""
+        config = make_config(
+            registry_password="secret-password",
+        )
+        assert "secret-password" not in repr(config)
+
     def test_no_validation_when_push_images_false(self, make_config):
         """Registry fields are not validated when push_images is False."""
         config = make_config()
@@ -183,13 +190,13 @@ class TestBuildahLogin:
                     "login",
                     "--username",
                     "test-user",
-                    "--password",
-                    "test-password",
+                    "--password-stdin",
                     "quay.io",
                 ]
                 assert call_args[0][0] == expected_cmd
                 assert call_args[1]["check"] is True
                 assert call_args[1]["capture_output"] is True
+                assert call_args[1]["input"] == b"test-password"
 
                 mock_logger.info.assert_called_with("Logged in to registry quay.io with buildah.")
 
@@ -240,12 +247,12 @@ class TestBuildahLogin:
                 "login",
                 "--username",
                 "test-user",
-                "--password",
-                "test-password",
+                "--password-stdin",
                 "--tls-verify=false",
                 "localhost:5000",
             ]
             assert call_args[0][0] == expected_cmd
+            assert call_args[1]["input"] == b"test-password"
 
     def test_secure_registry_default(self, make_config):
         """Insecure flag is NOT added when registry_insecure is False."""
@@ -271,11 +278,11 @@ class TestBuildahLogin:
                 "login",
                 "--username",
                 "test-user",
-                "--password",
-                "test-password",
+                "--password-stdin",
                 "quay.io",
             ]
             assert call_args[0][0] == expected_cmd
+            assert call_args[1]["input"] == b"test-password"
             assert "--tls-verify=false" not in call_args[0][0]
 
     def test_skip_login_when_auth_file_set(self, make_config):

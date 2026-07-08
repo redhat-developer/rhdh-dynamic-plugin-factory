@@ -25,7 +25,7 @@ def setup_logging(
         Configured logger instance
     """
 
-    install(show_locals=True)
+    install(show_locals=False)
 
     logger = logging.getLogger("rhdh_dynamic_plugin_factory")
     logger.setLevel(getattr(logging, level.upper() if level.upper() in LEVELS else "INFO"))
