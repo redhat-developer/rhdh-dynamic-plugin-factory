@@ -2,6 +2,7 @@
 config/
 outputs/
 workspace/
+source/
 examples/
 
 # IDE 
@@ -19,6 +20,8 @@ examples/
 tests/
 pytest.ini
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.pyc
 htmlcov/
 .coverage
@@ -30,4 +33,5 @@ requirements.dev.txt
 renovate.json
 
 # Logs
+logs/
 **/*.log

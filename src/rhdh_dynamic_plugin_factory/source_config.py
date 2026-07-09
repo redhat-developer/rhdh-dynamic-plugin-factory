@@ -286,7 +286,9 @@ def clone_workspaces_with_worktrees(
 
     logger = get_logger("config")
     clones_dir = base_repo_path / ".clones"
-    os.makedirs(clones_dir, exist_ok=True)
+    os.makedirs(
+        clones_dir, exist_ok=True
+    )  # NOSONAR -- path derived from operator-controlled repo_path, not untrusted input
 
     for repo_url, group in groupby(workspaces, key=lambda w: w.source_config.repo):
         workspace_list = list(group)

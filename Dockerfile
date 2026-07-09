@@ -6,15 +6,15 @@ LABEL description="RHDH Dynamic Plugin Factory - Build and package Backstage plu
       io.podman.annotations.device="/dev/fuse" \
       io.podman.annotations.cap-add="SYS_ADMIN"
 
+# NOSONAR -- root required for buildah/fuse-overlayfs operations
 USER 0
 
 WORKDIR /app
-# Install corepack (not included in UBI images by default)
-RUN npm install -g corepack
 
-# Install necessary dependencies for building Node.js and other tools
-RUN microdnf update -y  
-RUN microdnf install -y --nodocs \
+# Install system dependencies and corepack
+RUN npm install -g corepack \
+  && microdnf update -y \
+  && microdnf install -y --nodocs \
   --setopt=install_weak_deps=0 \
   --setopt=tsflags=nodocs \
   python3.12 git-core patch python3.12-pip make g++ zlib-devel \
@@ -28,7 +28,11 @@ COPY requirements.txt .
 # Install Python Dependencies
 RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY resources/ ./resources/
+COPY default.env .
+COPY LICENSE .
 
 RUN mkdir -p /workspace /outputs /config
 

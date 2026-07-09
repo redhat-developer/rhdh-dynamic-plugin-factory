@@ -40,7 +40,7 @@ class PluginFactoryConfig:
     # Registry configuration (loaded from environment variables, only required for push operations)
     registry_url: str | None = field(default=None)
     registry_username: str | None = field(default=None)
-    registry_password: str | None = field(default=None)
+    registry_password: str | None = field(default=None, repr=False)
     registry_namespace: str | None = field(default=None)
     registry_insecure: bool = field(default=False)
     registry_auth_file: str | None = field(default=None)
@@ -173,7 +173,9 @@ class PluginFactoryConfig:
 
         # Ensure required directories exist before constructing config
         for dir_path in [config_dir, repo_path]:
-            os.makedirs(dir_path, exist_ok=True)
+            os.makedirs(
+                dir_path, exist_ok=True
+            )  # NOSONAR -- paths are operator-controlled CLI args, not untrusted input
 
         workspace_path = getattr(args, "workspace_path", None)
 
@@ -232,8 +234,7 @@ class PluginFactoryConfig:
                 "login",
                 "--username",
                 str(self.registry_username),
-                "--password",
-                str(self.registry_password),
+                "--password-stdin",
             ]
 
             if self.registry_insecure:
@@ -241,7 +242,12 @@ class PluginFactoryConfig:
 
             cmd.append(str(self.registry_url))
 
-            subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                input=str(self.registry_password).encode(),
+            )
             self.logger.info(f"Logged in to registry {self.registry_url} with buildah.")
         except subprocess.CalledProcessError as e:
             raise ExecutionError(
@@ -569,7 +575,7 @@ class PluginFactoryConfig:
             load_dotenv(config_env_file, override=True)
             env = dict[str, str](os.environ)
 
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)  # NOSONAR -- path is operator-controlled CLI arg, not untrusted input
         env["INPUTS_DESTINATION"] = output_dir
         env.update(
             {
