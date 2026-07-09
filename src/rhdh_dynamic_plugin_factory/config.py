@@ -173,7 +173,7 @@ class PluginFactoryConfig:
 
         # Ensure required directories exist before constructing config
         for dir_path in [config_dir, repo_path]:
-            os.makedirs(dir_path, exist_ok=True)
+            os.makedirs(dir_path, exist_ok=True)  # NOSONAR -- paths are operator-controlled CLI args, not untrusted input
 
         workspace_path = getattr(args, "workspace_path", None)
 
@@ -573,7 +573,7 @@ class PluginFactoryConfig:
             load_dotenv(config_env_file, override=True)
             env = dict[str, str](os.environ)
 
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)  # NOSONAR -- path is operator-controlled CLI arg, not untrusted input
         env["INPUTS_DESTINATION"] = output_dir
         env.update(
             {

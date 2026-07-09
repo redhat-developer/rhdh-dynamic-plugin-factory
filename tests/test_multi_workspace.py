@@ -53,7 +53,7 @@ class TestWorkspaceInfo:
         """Test that repo_path and output_dir default to None."""
         ws = WorkspaceInfo(
             name="test",
-            config_dir=Path("/tmp/test"),
+            config_dir=Path("/tmp/test"), # NOSONAR - test path for e2e
             source_config=MagicMock(),
         )
 
@@ -1059,7 +1059,7 @@ class TestRegistryRefresh:
         defaults = {
             "REGISTRY_URL": "quay.io",
             "REGISTRY_USERNAME": "user",
-            "REGISTRY_PASSWORD": "pass",
+            "REGISTRY_PASSWORD": "pass", # NOSONAR - test password
             "REGISTRY_NAMESPACE": "ns",
             "REGISTRY_INSECURE": "false",
         }

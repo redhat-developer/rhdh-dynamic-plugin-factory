@@ -57,7 +57,7 @@ def run_command_with_streaming(
     if stderr_log_func is None:
         stderr_log_func = logger_instance.warning
 
-    process = subprocess.Popen(
+    process = subprocess.Popen(  # NOSONAR -- cmd/cwd are internally constructed from operator-controlled CLI args
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -126,7 +126,7 @@ def collect_build_logs(logger: Logger, tmp_dir: Path | None = None, *, has_error
 
         logger.warning(f"[yellow]Build log: {log_path}[/yellow]")
         for line in contents.splitlines():
-            logger.warning(f"  {line}")
+            logger.warning(f"  {line}")  # NOSONAR -- content is yarn/node-gyp build output, not user-supplied input
 
 
 def display_export_results(workspace_path: Path, logger: Logger) -> bool:
@@ -144,13 +144,13 @@ def display_export_results(workspace_path: Path, logger: Logger) -> bool:
     has_failures = False
 
     if failed_file.exists():
-        failed_exports = failed_file.read_text().strip().split("\n") if failed_file.stat().st_size > 0 else []
+        failed_exports = failed_file.read_text().strip().split("\n") if failed_file.stat().st_size > 0 else []  # NOSONAR -- reading factory-generated output files, not untrusted input
         if failed_exports and failed_exports[0]:
             has_failures = True
             logger.error(f"Failed exports ({len(failed_exports)}): {', '.join(failed_exports)}")
 
     if published_file.exists():
-        published_exports = published_file.read_text().strip().split("\n") if published_file.stat().st_size > 0 else []
+        published_exports = published_file.read_text().strip().split("\n") if published_file.stat().st_size > 0 else []  # NOSONAR -- reading factory-generated output files, not untrusted input
         if published_exports and published_exports[0]:
             logger.info(f"[green]Published images ({len(published_exports)}):[/green]")
             for image in published_exports:

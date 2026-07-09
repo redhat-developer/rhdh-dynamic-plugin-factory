@@ -238,7 +238,7 @@ class PluginListConfig:
             The role string, or *None* if the file cannot be parsed or has no role.
         """
         try:
-            data = json.loads(pkg_json_path.read_text(encoding="utf-8"))
+            data = json.loads(pkg_json_path.read_text(encoding="utf-8"))  # NOSONAR -- path from workspace rglob, not untrusted input
             role = data.get("backstage", {}).get("role")
             cls.logger.debug(f"Read backstage role from {pkg_json_path}: {role}")
             return str(role) if role is not None else None

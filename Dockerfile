@@ -6,15 +6,14 @@ LABEL description="RHDH Dynamic Plugin Factory - Build and package Backstage plu
       io.podman.annotations.device="/dev/fuse" \
       io.podman.annotations.cap-add="SYS_ADMIN"
 
-USER 0
+USER 0 # NOSONAR
 
 WORKDIR /app
-# Install corepack (not included in UBI images by default)
-RUN npm install -g corepack
 
-# Install necessary dependencies for building Node.js and other tools
-RUN microdnf update -y  
-RUN microdnf install -y --nodocs \
+# Install system dependencies and corepack
+RUN npm install -g corepack \
+  && microdnf update -y \
+  && microdnf install -y --nodocs \
   --setopt=install_weak_deps=0 \
   --setopt=tsflags=nodocs \
   python3.12 git-core patch python3.12-pip make g++ zlib-devel \
