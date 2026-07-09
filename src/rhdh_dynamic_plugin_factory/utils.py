@@ -144,13 +144,17 @@ def display_export_results(workspace_path: Path, logger: Logger) -> bool:
     has_failures = False
 
     if failed_file.exists():
-        failed_exports = failed_file.read_text().strip().split("\n") if failed_file.stat().st_size > 0 else []  # NOSONAR -- reading factory-generated output files, not untrusted input
+        failed_exports = (
+            failed_file.read_text().strip().split("\n") if failed_file.stat().st_size > 0 else []
+        )  # NOSONAR -- reading factory-generated output files, not untrusted input
         if failed_exports and failed_exports[0]:
             has_failures = True
             logger.error(f"Failed exports ({len(failed_exports)}): {', '.join(failed_exports)}")
 
     if published_file.exists():
-        published_exports = published_file.read_text().strip().split("\n") if published_file.stat().st_size > 0 else []  # NOSONAR -- reading factory-generated output files, not untrusted input
+        published_exports = (
+            published_file.read_text().strip().split("\n") if published_file.stat().st_size > 0 else []
+        )  # NOSONAR -- reading factory-generated output files, not untrusted input
         if published_exports and published_exports[0]:
             logger.info(f"[green]Published images ({len(published_exports)}):[/green]")
             for image in published_exports:

@@ -173,7 +173,9 @@ class PluginFactoryConfig:
 
         # Ensure required directories exist before constructing config
         for dir_path in [config_dir, repo_path]:
-            os.makedirs(dir_path, exist_ok=True)  # NOSONAR -- paths are operator-controlled CLI args, not untrusted input
+            os.makedirs(
+                dir_path, exist_ok=True
+            )  # NOSONAR -- paths are operator-controlled CLI args, not untrusted input
 
         workspace_path = getattr(args, "workspace_path", None)
 
