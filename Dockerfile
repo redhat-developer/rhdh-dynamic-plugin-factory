@@ -6,7 +6,8 @@ LABEL description="RHDH Dynamic Plugin Factory - Build and package Backstage plu
       io.podman.annotations.device="/dev/fuse" \
       io.podman.annotations.cap-add="SYS_ADMIN"
 
-USER 0 # NOSONAR
+# NOSONAR -- root required for buildah/fuse-overlayfs operations
+USER 0
 
 WORKDIR /app
 
