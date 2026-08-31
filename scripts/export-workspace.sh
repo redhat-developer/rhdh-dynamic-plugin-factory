@@ -161,6 +161,16 @@ else
                dist-dynamic/package.json > dist-dynamic/package.json.tmp \
                && mv dist-dynamic/package.json.tmp dist-dynamic/package.json
         fi
+
+        # Validate backstage.features for frontend plugins (NFS readiness)
+        if [[ "$pluginType" == "frontend" ]] && [[ -f "dist-dynamic/package.json" ]]; then
+            features=$(jq -c '.backstage.features // {}' dist-dynamic/package.json 2>/dev/null || echo '{}')
+            if [[ "$features" == "{}" || "$features" == "null" || -z "$features" ]]; then
+                echo "  ⚠️  backstage.features is missing or empty — plugin may not be NFS-ready"
+            else
+                echo "  ✅ backstage.features: $features"
+            fi
+        fi
         echo
 
         # package the dynamic plugin in a container image
