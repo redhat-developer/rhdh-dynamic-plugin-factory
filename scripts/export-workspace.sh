@@ -37,6 +37,10 @@ fi
 # export INPUTS_CLI_CALLER=/path/to/node_modules/.bin/rhdh-cli
 INPUTS_CLI_CALLER=${INPUTS_CLI_CALLER:-"npx --yes ${INPUTS_CLI_PACKAGE}@${INPUTS_CLI_VERSION}"}
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=export-dynamic/pack-dist-dynamic.sh
+source "${SCRIPT_DIR}/pack-dist-dynamic.sh"
+
 # Check local installation first, then fall back to npx --yes (requires network)
 run_cli() {
     local cli_args=("$@")
@@ -161,6 +165,16 @@ else
                dist-dynamic/package.json > dist-dynamic/package.json.tmp \
                && mv dist-dynamic/package.json.tmp dist-dynamic/package.json
         fi
+
+        # Validate backstage.features for frontend plugins (NFS readiness)
+        if [[ "$pluginType" == "frontend" ]] && [[ -f "dist-dynamic/package.json" ]]; then
+            features=$(jq -c '.backstage.features // {}' dist-dynamic/package.json 2>/dev/null || echo '{}')
+            if [[ "$features" == "{}" || "$features" == "null" || -z "$features" ]]; then
+                echo "  ⚠️  backstage.features is missing or empty — plugin may not be NFS-ready"
+            else
+                echo "  ✅ backstage.features: $features"
+            fi
+        fi
         echo
 
         # package the dynamic plugin in a container image
@@ -198,8 +212,8 @@ else
             packDestination=${INPUTS_DESTINATION}
             mkdir -pv "${packDestination}"
 
-            echo "  running npm pack on the exported './dist-dynamic' sub-folder"
-            if ! json=$(npm pack ./dist-dynamic --pack-destination "$packDestination" --json); then
+            echo "  running npm pack on a hardlink-free copy of './dist-dynamic'"
+            if ! json=$(pack_dist_dynamic "$(pwd)/dist-dynamic" "$packDestination"); then
                 errors+=("${pluginPath}")
                 set -e
                 popd > /dev/null
